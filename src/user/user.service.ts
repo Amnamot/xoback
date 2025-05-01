@@ -41,10 +41,9 @@ export class UserService {
       return this.prisma.user.update({
         where: { telegramId: dto.telegramId },
         data: {
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          userName: dto.userName,
-          avatar: dto.avatar,
+          firstName: dto.firstName ?? '',
+          lastName: dto.lastName ?? '',
+          userName: dto.userName ?? '',
           lastVisit: new Date(),
         },
       });
@@ -52,11 +51,10 @@ export class UserService {
       // Создаём нового пользователя со всеми начальными значениями
       return this.prisma.user.create({
         data: {
-          telegramId: dto.telegramId,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          userName: dto.userName,
-          avatar: dto.avatar,
+          telegramId: dto.telegramId ?? '',
+          firstName: dto.firstName ?? '',
+          lastName: dto.lastName ?? '',
+          userName: dto.userName ?? '',
           xoId: xoId,
           createdAt: new Date(),
           lastVisit: new Date(),
