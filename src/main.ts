@@ -6,15 +6,17 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Swagger конфигурация
   const config = new DocumentBuilder()
-    .setTitle('XO Stars API')
-    .setDescription('API for managing Telegram users and games')
+    .setTitle('XO API')
+    .setDescription('API для WebApp Telegram')
     .setVersion('1.0')
     .build();
+
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup('docs', app, document);
 
-  await app.listen(process.env.PORT ?? 3000);
+  // Запуск приложения
+  await app.listen(3000);
 }
-
 bootstrap();
