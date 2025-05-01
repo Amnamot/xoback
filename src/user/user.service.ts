@@ -1,42 +1,70 @@
-// user.service.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpsertUserDto } from './dto/upsert-user.dto';
 
 @Injectable()
 export class UserService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async createOrUpdateUser(data: {
-    telegramId: string;
-    userName: string;
-    firstName: string;
-    lastName: string;
-  }) {
-    const existing = await this.prisma.user.findUnique({
-      where: { telegramId: data.telegramId },
-    });
+  findAll() {
+    return this.prisma.user.findMany();
+  }
 
-    if (existing) {
-      return this.prisma.user.update({
-        where: { telegramId: data.telegramId },
-        data: { lastVisit: new Date() },
+  generateXoId(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({ length: 8 }, () =>
+      chars[Math.floor(Math.random() * chars.length)]
+    ).join('');
+  }
+
+  async upsertUser(dto: UpsertUserDto) {
+    // Генерация уникального xoId
+    let xoId: string;
+    while (true) {
+      const candidate = this.generateXoId();
+      const existing = await this.prisma.user.findUnique({
+        where: { xoId: candidate },
       });
+      if (!existing) {
+        xoId = candidate;
+        break;
+      }
     }
 
-    const generateXoId = (): string => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    };
-
-    return this.prisma.user.create({
-      data: {
-        telegramId: data.telegramId,
-        userName: data.userName,
-        firstName: data.firstName,
-        lastName: data.lastName,
-        lastVisit: new Date(),
-        xoId: generateXoId(),
-      },
+    // Проверка, существует ли пользователь
+    const existingUser = await this.prisma.user.findUnique({
+      where: { telegramId: dto.telegramId },
     });
+
+    if (existingUser) {
+      // Обновляем только определённые поля + lastVisit
+      return this.prisma.user.update({
+        where: { telegramId: dto.telegramId },
+        data: {
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          userName: dto.userName,
+          avatar: dto.avatar,
+          lastVisit: new Date(),
+        },
+      });
+    } else {
+      // Создаём нового пользователя со всеми начальными значениями
+      return this.prisma.user.create({
+        data: {
+          telegramId: dto.telegramId,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          userName: dto.userName,
+          avatar: dto.avatar,
+          xoId: xoId,
+          createdAt: new Date(),
+          lastVisit: new Date(),
+          numGames: 0,
+          numWins: 0,
+          stars: 0,
+        },
+      });
+    }
   }
 }
