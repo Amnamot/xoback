@@ -28,6 +28,6 @@ export class UserController {
     firstName: string;
     lastName: string;
   }) {
-    return this.userService.createOrUpdateUser(body);
+    return this.userService.upsertUser(body);
   }
 }
