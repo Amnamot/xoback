@@ -5,7 +5,10 @@ import * as crypto from 'crypto';
 export class InitDataService {
   validateInitData(initData: string, botToken: string): boolean {
     const parsed = new URLSearchParams(initData);
+
+    parsed.delete('signature'); // ✅ удаляем перед проверкой
     const hash = parsed.get('hash');
+    if (!hash) return false;
     parsed.delete('hash');
 
     const dataCheckString = [...parsed.entries()]
@@ -13,16 +16,9 @@ export class InitDataService {
       .sort()
       .join('\n');
 
-    const secret = crypto
-      .createHmac('sha256', 'WebAppData')
-      .update(botToken)
-      .digest();
+    const secret = crypto.createHash('sha256').update(botToken).digest();
+    const hmac = crypto.createHmac('sha256', secret).update(dataCheckString).digest('hex');
 
-    const computedHash = crypto
-      .createHmac('sha256', secret)
-      .update(dataCheckString)
-      .digest('hex');
-
-    return computedHash === hash;
+    return hmac === hash;
   }
 }
