@@ -1,4 +1,3 @@
-// src/utils/init-data.service.ts
 import { Injectable } from '@nestjs/common';
 import * as crypto from 'crypto';
 
@@ -10,12 +9,11 @@ export class InitDataService {
 
     const parsed = new URLSearchParams(initData);
 
-    parsed.delete('signature');
     const hash = parsed.get('hash');
     if (!hash) return false;
     parsed.delete('hash');
 
-    // ✅ Специальная обработка поля user — убираем экранированные слеши
+    // Специальная обработка поля user — убираем экранированные слеши
     const entries = [...parsed.entries()].map(([key, value]) => {
       if (key === 'user') {
         value = value.replace(/\\\//g, '/');
@@ -30,8 +28,16 @@ export class InitDataService {
 
     console.log('🧪 Data check string:\n', dataCheckString);
 
-    const secret = crypto.createHash('sha256').update(botToken).digest();
-    const hmac = crypto.createHmac('sha256', secret).update(dataCheckString).digest('hex');
+    // Создание секретного ключа с использованием 'WebAppData'
+    const secretKey = crypto
+      .createHmac('sha256', botToken)
+      .update('WebAppData')
+      .digest();
+
+    const hmac = crypto
+      .createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
 
     console.log('🧪 Computed HMAC:', hmac);
     console.log('🧪 Received hash:', hash);
