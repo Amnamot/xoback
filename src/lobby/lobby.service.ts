@@ -1,51 +1,71 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+// src/lobby/lobby.service.ts
+import { Injectable } from '@nestjs/common';
+import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
+import { InitDataService } from '../utils/init-data.service';
+import { nanoid } from 'nanoid';
+import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
 @Injectable()
 export class LobbyService {
-  private readonly redis = new Redis(process.env.REDIS_URL!);
-  private readonly logger = new Logger(LobbyService.name);
+  constructor(
+    @InjectRedis() private readonly redis: Redis,
+    private readonly initDataService: InitDataService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  async createLobby(user: any): Promise<{ lobbyId: string }> {
-    const lobbyId = randomUUID();
+  async createLobby(initData: string) {
+    const botToken = this.configService.get<string>('BOT_TOKEN');
+    if (!botToken) {
+      throw new Error('BOT_TOKEN is not defined');
+    }
 
+    if (!this.initDataService.validateInitData(initData, botToken)) {
+      throw new Error('Invalid initData');
+    }
+
+    const parsed = this.initDataService.parseInitData(initData);
+    const user = parsed.user;
+    if (!user) {
+      throw new Error('No user in initData');
+    }
+
+    const lobbyId = nanoid(8);
     const lobbyData = {
-      createdAt: Date.now(),
-      inviterId: user.id,
-      inviterName: user.first_name,
-      status: 'waiting',
+      user: {
+        id: user.id,
+        firstName: user.firstName,
+      },
     };
 
-    await this.redis.setex(`lobby:${lobbyId}`, 180, JSON.stringify(lobbyData)); // 3 минуты
+    await this.redis.setex(`lobby:${lobbyId}`, 180, JSON.stringify(lobbyData)); // TTL 3 минуты
 
-    await this.sendTelegramInvite(user, lobbyId);
+    const inviteLink = `https://t.me/TacTicToe_bot/game?startapp=invite_${lobbyId}`;
 
-    return { lobbyId };
-  }
+    console.log('📨 Sending invite to Telegram:', {
+      chat_id: user.id,
+      firstName: user.firstName,
+      inviteLink,
+    });
 
-  private async sendTelegramInvite(user: any, lobbyId: string) {
-    const url = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendPhoto`;
-
-    const payload = {
+    await axios.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
       chat_id: user.id,
       photo: 'https://igra.top/media/invite.jpg',
-      caption: `🕹 ${user.first_name} приглашает тебя на игру!`,
+      caption: `🎯 *${user.firstName}*, пригласил тебя сыграть партию!\n\nЖми на кнопку ниже, чтобы присоединиться.`,
+      parse_mode: 'Markdown',
       reply_markup: {
-        inline_keyboard: [[
-          {
-            text: 'Присоединиться к игре',
-            url: `https://t.me/TacTicToe_bot/game?startapp=${lobbyId}`
-          }
-        ]]
-      }
-    };
+        inline_keyboard: [
+          [
+            {
+              text: 'Присоединиться',
+              url: inviteLink,
+            },
+          ],
+        ],
+      },
+    });
 
-    try {
-      await axios.post(url, payload);
-    } catch (error) {
-      this.logger.error('Failed to send Telegram invite', error?.response?.data || error.message);
-    }
+    return { lobbyId, inviteLink };
   }
 }
