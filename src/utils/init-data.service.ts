@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 @Injectable()
 export class InitDataService {
   validateInitData(initData: string, botToken: string): boolean {
+    console.log('🧪 BOT_TOKEN (from env):', botToken);
     const parsed = new URLSearchParams(initData);
 
     parsed.delete('signature'); // ✅ удаляем перед проверкой
