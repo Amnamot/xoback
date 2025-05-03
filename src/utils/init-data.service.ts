@@ -7,7 +7,9 @@ export class InitDataService {
   validateInitData(initData: string, botToken: string): boolean {
     try {
       console.log('🧪 RAW initData:', initData);
-      validate(initData, botToken); // ← просто токен, без объекта
+      validate(initData, botToken); // ← проверка подписи и срока действия
+      const parsed = parse(initData);
+      console.log('✅ InitData is valid. Parsed user:', parsed.user);
       return true;
     } catch (error: any) {
       console.error('❌ InitData validation error:', error);
