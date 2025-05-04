@@ -1,30 +1,19 @@
 // main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ✅ Полная настройка CORS
   app.enableCors({
-    origin: 'https://igra.top',
+    origin: ['https://igra.top'],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-init-data'], // ✅ добавлено для initData
   });
 
-  // Swagger конфигурация
-  const config = new DocumentBuilder()
-    .setTitle('XO API')
-    .setDescription('API для WebApp Telegram')
-    .setVersion('1.0')
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
-
-  // Запуск приложения
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(3000);
 }
 bootstrap();
