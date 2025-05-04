@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts
+// lobby.service.ts
 import { Injectable } from '@nestjs/common';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
@@ -16,12 +16,8 @@ export class LobbyService {
   ) {}
 
   async createLobby(initData: string) {
-    const botToken = this.configService.get<string>('BOT_TOKEN');
-    if (!botToken) {
-      throw new Error('BOT_TOKEN is not defined');
-    }
-
-    if (!this.initDataService.validateInitData(initData, botToken)) {
+    const isValid = this.initDataService.validateInitData(initData);
+    if (!isValid) {
       throw new Error('Invalid initData');
     }
 
@@ -35,24 +31,19 @@ export class LobbyService {
     const lobbyData = {
       user: {
         id: user.id,
-        firstName: user.firstName,
+        firstName: user.first_name,
       },
     };
 
-    await this.redis.setex(`lobby:${lobbyId}`, 180, JSON.stringify(lobbyData)); // TTL 3 минуты
+    await this.redis.setex(`lobby:${lobbyId}`, 180, JSON.stringify(lobbyData));
 
     const inviteLink = `https://t.me/TacTicToe_bot/game?startapp=invite_${lobbyId}`;
+    const channelId = this.configService.get<string>('INVITE_CHANNEL_ID'); // ✅ добавлено
 
-    console.log('📨 Sending invite to Telegram:', {
-      chat_id: user.id,
-      firstName: user.firstName,
-      inviteLink,
-    });
-
-    await axios.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-      chat_id: user.id,
+    await axios.post(`https://api.telegram.org/bot${this.configService.get<string>('BOT_TOKEN')}/sendPhoto`, {
+      chat_id: channelId, // ✅ заменено
       photo: 'https://igra.top/media/invite.jpg',
-      caption: `🎯 *${user.firstName}*, пригласил тебя сыграть партию!\n\nЖми на кнопку ниже, чтобы присоединиться.`,
+      caption: `🎯 *${user.first_name}*, пригласил тебя сыграть партию!\n\nЖми на кнопку ниже, чтобы присоединиться.`,
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [

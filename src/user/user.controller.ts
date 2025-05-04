@@ -25,21 +25,18 @@ export class UserController {
 
   @Post('init')
   async init(@Body() body: { initData: string }) {
-    const isValid = this.initDataService.validateInitData(
-      body.initData,
-      process.env.BOT_TOKEN!, // ✅ уверены, что переменная есть
-    );
+    const isValid = this.initDataService.validateInitData(body.initData);
 
     if (!isValid) {
       throw new UnauthorizedException('Invalid initData');
     }
 
-    const userStr = new URLSearchParams(body.initData).get('user');
-    if (!userStr) {
+    const parsed = this.initDataService.parseInitData(body.initData);
+    const userObj = parsed.user;
+
+    if (!userObj) {
       throw new BadRequestException('Missing "user" field in initData');
     }
-
-    const userObj = JSON.parse(decodeURIComponent(userStr));
 
     return this.userService.upsertUser({
       telegramId: userObj.id.toString(),
