@@ -7,10 +7,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: ['https://igra.top'],
+    origin: ['https://igra.top'], // ✅ разрешаем фронт
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-init-data'], // ✅ добавлено для initData
+    methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'x-init-data'], // ✅ разрешаем заголовки
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
