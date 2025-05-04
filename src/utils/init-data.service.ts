@@ -1,4 +1,5 @@
-// src/utils/init-data.service.ts
+// src/utils/init-data.service.ts 
+// v
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { parse, validate } from '@tma.js/init-data-node';
