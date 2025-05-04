@@ -31,7 +31,7 @@ export class LobbyService {
     const lobbyData = {
       user: {
         id: user.id,
-        firstName: user.first_name,
+        firstName: user.firstName,
       },
     };
 
@@ -43,7 +43,7 @@ export class LobbyService {
     await axios.post(`https://api.telegram.org/bot${this.configService.get<string>('BOT_TOKEN')}/sendPhoto`, {
       chat_id: channelId, // ✅ заменено
       photo: 'https://igra.top/media/invite.jpg',
-      caption: `🎯 *${user.first_name}*, пригласил тебя сыграть партию!\n\nЖми на кнопку ниже, чтобы присоединиться.`,
+      caption: `🎯 *${user.firstName}*, пригласил тебя сыграть партию!\n\nЖми на кнопку ниже, чтобы присоединиться.`,
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
