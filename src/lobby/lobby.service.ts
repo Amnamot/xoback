@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v5
+// src/lobby/lobby.service.ts v6
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,11 +37,10 @@ export class LobbyService {
     const inviteLink = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
 
     const botToken = this.configService.get<string>('BOT_TOKEN');
-    const channelId = this.configService.get<string>('INVITE_CHANNEL_ID') || '-1002654297071';
     const imageUrl = 'https://igra.top/media/inviteImg.png';
 
     const res = await axios.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-      chat_id: channelId,
+      chat_id: telegramId,
       photo: imageUrl,
       caption: `${firstName} вызывает тебя на поединок в TacTicToe!\nНажми кнопку ниже, чтобы принять вызов.`,
       reply_markup: {
