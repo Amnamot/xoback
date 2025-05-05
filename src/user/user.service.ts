@@ -1,3 +1,4 @@
+// src/user/user.service.ts v1
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertUserDto } from './dto/upsert-user.dto';
@@ -38,7 +39,7 @@ export class UserService {
 
     if (existingUser) {
       // Обновляем только определённые поля + lastVisit
-      return this.prisma.user.update({
+      await this.prisma.user.update({
         where: { telegramId: dto.telegramId },
         data: {
           firstName: dto.firstName ?? '',
@@ -49,7 +50,7 @@ export class UserService {
       });
     } else {
       // Создаём нового пользователя со всеми начальными значениями
-      return this.prisma.user.create({
+      await this.prisma.user.create({
         data: {
           telegramId: dto.telegramId ?? '',
           firstName: dto.firstName ?? '',
@@ -64,5 +65,16 @@ export class UserService {
         },
       });
     }
+
+    // Возвращаем только нужные поля
+    return this.prisma.user.findUnique({
+      where: { telegramId: dto.telegramId },
+      select: {
+        firstName: true,
+        numGames: true,
+        numWins: true,
+        stars: true,
+      },
+    });
   }
 }
