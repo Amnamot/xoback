@@ -1,32 +1,25 @@
-// src/utils/init-data.service.ts 
-// v
-import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { parse, validate } from '@tma.js/init-data-node';
+import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class InitDataService {
-  private readonly botToken: string;
-
-  constructor(private readonly configService: ConfigService) {
-    const token = this.configService.get<string>('BOT_TOKEN');
-    if (!token) {
-      throw new Error('BOT_TOKEN is not defined in environment variables');
-    }
-    this.botToken = token;
-  }
-
   validateInitData(initData: string): boolean {
     try {
-      validate(initData, this.botToken);
-      return true;
-    } catch (error) {
-      console.error('❌ Invalid initData:', error);
-      throw new UnauthorizedException('Invalid initData');
+      const decoded = decodeURIComponent(initData);
+      const params = new URLSearchParams(decoded);
+      const user = params.get('user');
+      return !!user;
+    } catch {
+      return false;
     }
   }
 
-  parseInitData(initData: string) {
-    return parse(initData);
+  parseInitData(initData: string): any {
+    const decoded = decodeURIComponent(initData);
+    const params = new URLSearchParams(decoded);
+    const userRaw = params.get('user');
+    const user = userRaw ? JSON.parse(userRaw) : null;
+    return { user };
   }
 }
+
+export type InitDataParsed = ReturnType<typeof InitDataService.prototype.parseInitData>;
