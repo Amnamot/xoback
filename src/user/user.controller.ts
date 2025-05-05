@@ -40,7 +40,7 @@ export class UserController {
 
     return this.userService.upsertUser({
       telegramId: userObj.id.toString(),
-      firstName: userObj.firstName,
+      firstName: userObj.first_name,
       lastName: userObj.lastName ?? '',
       userName: userObj.username ?? '',
     });

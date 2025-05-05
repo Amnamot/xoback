@@ -1,4 +1,4 @@
-// src/user/dto/upsert-user.dto.ts
+// src/user/dto/upsert-user.dto.ts v1
 export class UpsertUserDto {
     telegramId: string;
     userName?: string;
