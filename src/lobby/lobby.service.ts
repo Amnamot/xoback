@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v6
+// src/lobby/lobby.service.ts v7
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -35,27 +35,35 @@ export class LobbyService {
     await this.redis.set(lobbyId, telegramId, 'EX', 180);
 
     const inviteLink = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
-
     const botToken = this.configService.get<string>('BOT_TOKEN');
     const imageUrl = 'https://igra.top/media/inviteImg.png';
 
-    const res = await axios.post(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-      chat_id: telegramId,
-      photo: imageUrl,
-      caption: `${firstName} вызывает тебя на поединок в TacTicToe!\nНажми кнопку ниже, чтобы принять вызов.`,
-      reply_markup: {
-        inline_keyboard: [[
-          {
-            text: 'Принять вызов',
-            url: inviteLink,
-          }
-        ]]
+    const response = await axios.post(
+      `https://api.telegram.org/bot${botToken}/savePreparedInlineMessage`,
+      {
+        result: {
+          type: 'article',
+          id: lobbyId,
+          title: `${firstName} вызывает на поединок`,
+          input_message_content: {
+            message_text: `${firstName} вызывает тебя на поединок в TacTicToe!\n\nНажми кнопку ниже, чтобы принять вызов.`,
+          },
+          reply_markup: {
+            inline_keyboard: [[
+              {
+                text: 'Принять вызов',
+                url: inviteLink,
+              }
+            ]]
+          },
+          thumbnail_url: imageUrl,
+        }
       }
-    });
+    );
 
-    console.log('📦 Ответ Telegram:', JSON.stringify(res.data, null, 2));
+    console.log('📦 Ответ Telegram (prepared):', JSON.stringify(response.data, null, 2));
 
-    const messageId = (res.data as any)?.result?.message_id;
+    const messageId = (response.data as any)?.result?.message_id;
 
     return { lobbyId, inviteLink, messageId };
   }
