@@ -1,4 +1,4 @@
-// user.controller.ts
+// src/user/user.controller.ts v2
 import {
   Controller,
   Get,
@@ -31,18 +31,24 @@ export class UserController {
       throw new UnauthorizedException('Invalid initData');
     }
 
-    const parsed = this.initDataService.parseInitData(body.initData);
-    const userObj = parsed.user;
+    const { user } = this.initDataService.parseInitData(body.initData);
 
-    if (!userObj) {
+    if (!user) {
       throw new BadRequestException('Missing "user" field in initData');
     }
 
+    const {
+      id,
+      first_name: firstName,
+      last_name: lastName = '',
+      username: userName = '',
+    } = user;
+
     return this.userService.upsertUser({
-      telegramId: userObj.id.toString(),
-      firstName: userObj.first_name,
-      lastName: userObj.lastName ?? '',
-      userName: userObj.username ?? '',
+      telegramId: id.toString(),
+      firstName,
+      lastName,
+      userName,
     });
   }
 }
