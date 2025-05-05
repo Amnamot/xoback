@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v3
+// src/lobby/lobby.service.ts v4
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
