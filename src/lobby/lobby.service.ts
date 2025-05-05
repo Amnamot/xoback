@@ -1,3 +1,4 @@
+// src/lobby/lobby.service.ts v1
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
