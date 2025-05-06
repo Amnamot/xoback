@@ -1,4 +1,4 @@
-// src/lobby/lobby.controller.ts v1
+// src/lobby/lobby.controller.ts v2
 import {
   Controller,
   Post,
