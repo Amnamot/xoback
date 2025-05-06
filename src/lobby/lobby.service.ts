@@ -107,7 +107,7 @@ to fight in endless TicTacToe`,
       description: "Нажми, чтобы принять вызов!",
       thumbnail_url: "https://igra.top/media/inviteImg.png",
       input_message_content: {
-        message_text: "❌⭕ Join me in XO!"
+        message_text: "❌⭕ Джоин me in XO!"
       },
       reply_markup: {
         inline_keyboard: [[{
