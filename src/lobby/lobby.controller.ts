@@ -1,3 +1,4 @@
+// src/lobby/lobby.controller.ts v1
 import {
   Controller,
   Post,
@@ -8,6 +9,7 @@ import { LobbyService } from './lobby.service';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { InitDataParsed } from '../utils/init-data.service';
+import { RequestWithAuth } from '../../types';
 
 interface RequestWithInitData extends Request {
   initData: InitDataParsed;
@@ -17,10 +19,16 @@ interface RequestWithInitData extends Request {
 export class LobbyController {
   constructor(private readonly lobbyService: LobbyService) {}
 
+  @Post('createLobby')
   @UseGuards(AuthGuard)
-  @Post('createInvite')
-  async createInvite(@Req() request: RequestWithInitData) {
-    const initData = request.initData;
+  async createLobby(@Req() req: RequestWithInitData) {
+    const initData = req.initData;
     return this.lobbyService.createLobby(initData);
+  }
+
+  @Post('createInvite')
+  @UseGuards(AuthGuard)
+  async createInvite(@Req() req: RequestWithAuth) {
+    return this.lobbyService.createInvite(req.tgId);
   }
 }

@@ -1,5 +1,5 @@
-// src/lobby/lobby.service.ts v10
-import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+// src/lobby/lobby.service.ts v11
+import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -7,6 +7,7 @@ import { Redis } from 'ioredis';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import { randomBytes } from 'crypto';
 import axios from 'axios';
+import { firstValueFrom } from 'rxjs';
 
 interface TelegramPreparedMessageResponse {
   ok: boolean;
@@ -27,7 +28,6 @@ export class LobbyService {
   async createLobby(initData: InitDataParsed) {
     const telegramId = initData.user?.id;
     const firstName = initData.user?.first_name || 'Игрок';
-    const username = initData.user?.username || 'player';
 
     if (!telegramId) {
       throw new UnauthorizedException('Invalid Telegram ID');
@@ -76,5 +76,45 @@ export class LobbyService {
     } else {
       throw new Error(response.data.description || "Ошибка при создании приглашения");
     }
+  }
+
+  async createInvite(tgId: string) {
+    const keys = await this.redis.keys('lobby_*');
+    let lobbyId: string | null = null;
+
+    for (const key of keys) {
+      const value = await this.redis.get(key);
+      if (value === tgId.toString()) {
+        lobbyId = key;
+        break;
+      }
+    }
+
+    if (!lobbyId) {
+      throw new ForbiddenException('Lobby not found');
+    }
+
+    const result = {
+      type: "article",
+      id: randomBytes(5).toString("hex"),
+      title: "Tic Tac Toe ❌⭕",
+      thumbnail_url: "https://igra.top/media/inviteImg.png",
+      input_message_content: {
+        message_text: "❌⭕ Join me in XO!"
+      },
+      reply_markup: {
+        inline_keyboard: [[{
+          text: "Play Now",
+          url: `https://t.me/TacTicToe_bot?startapp=${lobbyId}`
+        }]]
+      }
+    };
+
+    const BOT_TOKEN = this.configService.get("BOT_TOKEN");
+    const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
+    const url = `${apiUrl}?user_id=${tgId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+
+    const { data } = await firstValueFrom(this.httpService.get(url));
+    return { messageId: data.result.id, lobbyId };
   }
 }
