@@ -9,7 +9,7 @@ import { LobbyService } from './lobby.service';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { InitDataParsed } from '../utils/init-data.service';
-import { RequestWithAuth } from '../../types';
+import { RequestWithAuth } from '../types';
 
 interface RequestWithInitData extends Request {
   initData: InitDataParsed;

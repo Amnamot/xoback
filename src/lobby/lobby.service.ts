@@ -7,6 +7,7 @@ import { Redis } from 'ioredis';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import { randomBytes } from 'crypto';
 import axios from 'axios';
+import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
 interface TelegramPreparedMessageResponse {
@@ -23,6 +24,7 @@ export class LobbyService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @InjectRedis() private readonly redis: Redis,
+    private readonly httpService: HttpService
   ) {}
 
   async createLobby(initData: InitDataParsed) {
@@ -114,7 +116,7 @@ export class LobbyService {
     const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
     const url = `${apiUrl}?user_id=${tgId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
 
-    const { data } = await firstValueFrom(this.httpService.get(url));
+    const { data }: any = await firstValueFrom(this.httpService.get(url));
     return { messageId: data.result.id, lobbyId };
   }
 }
