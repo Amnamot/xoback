@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v16
+// src/lobby/lobby.service.ts v17
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -45,19 +45,8 @@ export class LobbyService {
     await this.redis.set(lobbyId, telegramId.toString(), 'EX', 180);
 
     const inviteUrl = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
-    const BOT_TOKEN = this.configService.get<string>('BOT_TOKEN');
-    const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
 
-    const url = `${API_URL}?user_id=${telegramId}&result=${encodeURIComponent(JSON.stringify({}))}&allow_user_chats=true&allow_group_chats=true`;
-
-    const response = await axios.get<TelegramPreparedMessageResponse>(url);
-    console.log("📦 Reply from Telegram:", JSON.stringify(response.data, null, 2));
-
-    if (response.data.ok && response.data.result) {
-      return { lobbyId, inviteUrl, messageId: response.data.result.msg_id };
-    } else {
-      throw new Error(response.data.description || "Error creating invitation");
-    }
+    return { lobbyId, inviteUrl };
   }
 
   async createInvite(tgId: string) {
