@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v15
+// src/lobby/lobby.service.ts v16
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -51,18 +51,18 @@ export class LobbyService {
     const url = `${API_URL}?user_id=${telegramId}&result=${encodeURIComponent(JSON.stringify({}))}&allow_user_chats=true&allow_group_chats=true`;
 
     const response = await axios.get<TelegramPreparedMessageResponse>(url);
-    console.log("📦 Ответ от Telegram:", JSON.stringify(response.data, null, 2));
+    console.log("📦 Reply from Telegram:", JSON.stringify(response.data, null, 2));
 
     if (response.data.ok && response.data.result) {
       return { lobbyId, inviteUrl, messageId: response.data.result.msg_id };
     } else {
-      throw new Error(response.data.description || "Ошибка при создании приглашения");
+      throw new Error(response.data.description || "Error creating invitation");
     }
   }
 
   async createInvite(tgId: string) {
     const user = await this.prisma.user.findUnique({ where: { telegramId: tgId.toString() } });
-    const firstName = user?.firstName || "Игрок";
+    const firstName = user?.firstName || "Gamer";
 
     const keys = await this.redis.keys('lobby_*');
     let lobbyId: string | null = null;
@@ -82,8 +82,8 @@ export class LobbyService {
     const result = {
       type: "article",
       id: randomBytes(5).toString("hex"),
-      title: "Приглашение в игру! 🎮",
-      description: "Нажми, чтобы принять вызов!",
+      title: "Invitation to the game!",
+      description: "Click to accept the call!",
       input_message_content: {
         message_text: `❌ Invitation to the game ⭕️
 
