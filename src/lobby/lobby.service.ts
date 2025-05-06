@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v8
+// src/lobby/lobby.service.ts v9
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -55,6 +55,12 @@ export class LobbyService {
     console.log('📦 Ответ Telegram:', JSON.stringify(res.data, null, 2));
 
     const messageId = (res.data as any)?.result?.message_id;
+
+    // Удаляем сообщение после отправки (по примеру Dice)
+    await axios.post(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
+      chat_id: telegramId,
+      message_id: messageId,
+    });
 
     return { lobbyId, inviteLink, messageId };
   }
