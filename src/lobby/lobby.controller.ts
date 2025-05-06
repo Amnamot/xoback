@@ -1,9 +1,10 @@
-// src/lobby/lobby.controller.ts v2
+// src/lobby/lobby.controller.ts v3
 import {
   Controller,
   Post,
   Req,
   UseGuards,
+  Delete,
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
 import { Request } from 'express';
@@ -30,5 +31,11 @@ export class LobbyController {
   @UseGuards(AuthGuard)
   async createInvite(@Req() req: RequestWithAuth) {
     return this.lobbyService.createInvite(req.tgId);
+  }
+
+  @UseGuards(AuthGuard)
+  @Delete('cancel')
+  async cancelLobby(@Req() req: RequestWithAuth) {
+    return this.lobbyService.cancelLobby(req.tgId);
   }
 }

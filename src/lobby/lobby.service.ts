@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v14
+// src/lobby/lobby.service.ts v15
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -93,7 +93,7 @@ to fight in endless TicTacToe`,
       reply_markup: {
         inline_keyboard: [[
           {
-            text: "⚔️ Accept the battle 🛡" ,
+            text: "⚔️ Accept the battle 🛡",
             url: `https://t.me/TacTicToe_bot?startapp=${lobbyId}`
           }
         ]]
@@ -109,5 +109,17 @@ to fight in endless TicTacToe`,
 
     const { data }: any = await firstValueFrom(this.httpService.get(url));
     return { messageId: data.result.id, lobbyId };
+  }
+
+  async cancelLobby(tgId: string) {
+    const keys = await this.redis.keys('lobby_*');
+    for (const key of keys) {
+      const value = await this.redis.get(key);
+      if (value === tgId.toString()) {
+        await this.redis.del(key);
+        return { success: true };
+      }
+    }
+    throw new NotFoundException('Lobby not found');
   }
 }
