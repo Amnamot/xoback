@@ -48,31 +48,7 @@ export class LobbyService {
     const BOT_TOKEN = this.configService.get<string>('BOT_TOKEN');
     const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
 
-    const result = {
-      type: "article",
-      id: randomBytes(5).toString("hex"),
-      title: "Приглашение в игру! 🎮",
-      description: "Нажми, чтобы принять вызов!",
-      input_message_content: {
-        message_text: `❌ [Invitation to the game](https://igra.top/media/inviteImg.png) ⭕️
-
-**${firstName}** invites you
-to fight in endless TicTacToe`,
-      },
-      reply_markup: {
-        inline_keyboard: [[
-          {
-            text: "⚔️ Accept the battle 🛡" ,
-            url: inviteUrl
-          }
-        ]]
-      },
-      thumbnail_url: "https://igra.top/media/inviteImg.png",
-      thumbnail_width: 300,
-      thumbnail_height: 300,
-    };
-
-    const url = `${API_URL}?user_id=${telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+    const url = `${API_URL}?user_id=${telegramId}&result=${encodeURIComponent(JSON.stringify({}))}&allow_user_chats=true&allow_group_chats=true`;
 
     const response = await axios.get<TelegramPreparedMessageResponse>(url);
     console.log("📦 Ответ от Telegram:", JSON.stringify(response.data, null, 2));
@@ -103,18 +79,25 @@ to fight in endless TicTacToe`,
     const result = {
       type: "article",
       id: randomBytes(5).toString("hex"),
-      title: "Tic Tac Toe ❌⭕",
+      title: "Приглашение в игру! 🎮",
       description: "Нажми, чтобы принять вызов!",
-      thumbnail_url: "https://igra.top/media/inviteImg.png",
       input_message_content: {
-        message_text: "❌⭕ Джоин me in XO!"
+        message_text: `❌ [Invitation to the game](https://igra.top/media/inviteImg.png) ⭕️
+
+**Игрок** invites you
+to fight in endless TicTacToe`,
       },
       reply_markup: {
-        inline_keyboard: [[{
-          text: "Play Now",
-          url: `https://t.me/TacTicToe_bot?startapp=${lobbyId}`
-        }]]
-      }
+        inline_keyboard: [[
+          {
+            text: "⚔️ Accept the battle 🛡" ,
+            url: `https://t.me/TacTicToe_bot?startapp=${lobbyId}`
+          }
+        ]]
+      },
+      thumbnail_url: "https://igra.top/media/inviteImg.png",
+      thumbnail_width: 300,
+      thumbnail_height: 300,
     };
 
     const BOT_TOKEN = this.configService.get("BOT_TOKEN");
