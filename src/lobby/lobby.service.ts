@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v12
+// src/lobby/lobby.service.ts v14
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,13 +52,17 @@ export class LobbyService {
       type: "article",
       id: randomBytes(5).toString("hex"),
       title: "Приглашение в игру! 🎮",
+      description: "Нажми, чтобы принять вызов!",
       input_message_content: {
-        message_text: `🎲 ${firstName} вызывает тебя на дуэль в TacTicToe!\n\nНажми кнопку ниже, чтобы принять вызов.`,
+        message_text: `❌ [Invitation to the game](https://igra.top/media/inviteImg.png) ⭕️
+
+**${firstName}** invites you
+to fight in endless TicTacToe`,
       },
       reply_markup: {
         inline_keyboard: [[
           {
-            text: "Принять вызов 🚀",
+            text: "⚔️ Accept the battle 🛡" ,
             url: inviteUrl
           }
         ]]
@@ -100,6 +104,7 @@ export class LobbyService {
       type: "article",
       id: randomBytes(5).toString("hex"),
       title: "Tic Tac Toe ❌⭕",
+      description: "Нажми, чтобы принять вызов!",
       thumbnail_url: "https://igra.top/media/inviteImg.png",
       input_message_content: {
         message_text: "❌⭕ Join me in XO!"
