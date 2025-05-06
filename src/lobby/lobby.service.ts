@@ -61,6 +61,9 @@ export class LobbyService {
   }
 
   async createInvite(tgId: string) {
+    const user = await this.prisma.user.findUnique({ where: { telegramId: tgId.toString() } });
+    const firstName = user?.firstName || "Игрок";
+
     const keys = await this.redis.keys('lobby_*');
     let lobbyId: string | null = null;
 
@@ -82,9 +85,9 @@ export class LobbyService {
       title: "Приглашение в игру! 🎮",
       description: "Нажми, чтобы принять вызов!",
       input_message_content: {
-        message_text: `❌ [Invitation to the game](https://igra.top/media/inviteImg.png) ⭕️
+        message_text: `❌ Invitation to the game ⭕️
 
-**Игрок** invites you
+${firstName} invites you
 to fight in endless TicTacToe`,
       },
       reply_markup: {
