@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v17
+// src/lobby/lobby.service.ts v18
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -110,5 +110,16 @@ to fight in endless TicTacToe`,
       }
     }
     throw new NotFoundException('Lobby not found');
+  }
+
+  async joinLobby(tgId: string, lobbyId: string) {
+    const ownerTgId = await this.redis.get(lobbyId);
+    if (!ownerTgId) {
+      throw new NotFoundException('Lobby not found');
+    }
+    if (ownerTgId === tgId.toString()) {
+      throw new ForbiddenException('Cannot join own lobby');
+    }
+    return { success: true };
   }
 }

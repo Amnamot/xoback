@@ -1,10 +1,10 @@
-// src/lobby/lobby.controller.ts v3
+// src/lobby/lobby.controller.ts v4
 import {
   Controller,
   Post,
   Req,
   UseGuards,
-  Delete,
+  Body,
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
 import { Request } from 'express';
@@ -20,22 +20,27 @@ interface RequestWithInitData extends Request {
 export class LobbyController {
   constructor(private readonly lobbyService: LobbyService) {}
 
-  @Post('createLobby')
+  @Post('create')
   @UseGuards(AuthGuard)
-  async createLobby(@Req() req: RequestWithInitData) {
-    const initData = req.initData;
-    return this.lobbyService.createLobby(initData);
+  createLobby(@Req() req: RequestWithInitData) {
+    return this.lobbyService.createLobby(req.initData);
   }
 
   @Post('createInvite')
   @UseGuards(AuthGuard)
-  async createInvite(@Req() req: RequestWithAuth) {
+  createInvite(@Req() req: RequestWithAuth) {
     return this.lobbyService.createInvite(req.tgId);
   }
 
+  @Post('cancel')
   @UseGuards(AuthGuard)
-  @Delete('cancel')
-  async cancelLobby(@Req() req: RequestWithAuth) {
+  cancelLobby(@Req() req: RequestWithAuth) {
     return this.lobbyService.cancelLobby(req.tgId);
+  }
+
+  @Post('join')
+  @UseGuards(AuthGuard)
+  joinLobby(@Req() req: RequestWithAuth, @Body() body: { lobbyId: string }) {
+    return this.lobbyService.joinLobby(req.tgId, body.lobbyId);
   }
 }
