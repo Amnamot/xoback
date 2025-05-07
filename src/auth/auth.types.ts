@@ -4,7 +4,9 @@ import { Socket } from 'socket.io';
 export type AuthPayload = {
     tgId: string;
     username?: string;
-    photo_url?: string;
+    firstName: string;
+    lastName?: string;
+    photo_url: string;
 };
 
 export type RequestWithAuth = Request & AuthPayload;

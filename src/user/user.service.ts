@@ -16,17 +16,22 @@ export class UserService {
         if (!user) {
             return await this.prisma.user.create({
                 data: {
-                    id: req.tgId || "",
-                    username: req.username || "",
-                    photo_url: req.photo_url || ""
+                    id: req.tgId,
+                    username: req.username,
+                    photo_url: req.photo_url,
+                    first_name: req.firstName,
+                    last_name: req.lastName
                 },
             });
         } else {
             return await this.prisma.user.update({
                 where: { id: req.tgId },
                 data: {
-                    username: req.username || "",
-                    photo_url: req.photo_url || ""
+                    username: req.username,
+                    first_name: req.firstName,
+                    last_name: req.lastName,
+                    photo_url: req.photo_url,
+                    last_visit: new Date()
                 },
             });
         }

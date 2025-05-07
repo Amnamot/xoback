@@ -30,7 +30,9 @@ export class AuthGuard implements CanActivate {
 
         const payload = parse(initData);
         request.tgId = payload.user.id;
-        request.username = payload.user.firstName;
+        request.username = payload.user.username;
+        request.firstName = payload.user.firstName;
+        request.lastName = payload.user.lastName;
         request.photo_url = payload.user.photo_url;
 
         return true;
