@@ -1,4 +1,4 @@
-// src/lobby/lobby.module.ts v1
+// src/lobby/lobby.module.ts v2
 import { Module } from '@nestjs/common';
 import { LobbyController } from './lobby.controller';
 import { LobbyService } from './lobby.service';
