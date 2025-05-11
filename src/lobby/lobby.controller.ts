@@ -1,4 +1,4 @@
-// src/lobby/lobby.controller.ts v6
+// src/lobby/lobby.controller.ts v7
 import {
   Controller,
   Post,
@@ -50,5 +50,10 @@ export class LobbyController {
   @UseGuards(AuthGuard)
   getTimeLeft(@Req() req: RequestWithAuth) {
     return this.lobbyService.getTimeLeft(req.tgId);
+  }
+
+  @Delete('cancel')
+  cancelLobbyPublic(@Body() body: { lobbyId: string, telegramId: string }) {
+    return this.lobbyService.cancelLobbyPublic(body.lobbyId, body.telegramId);
   }
 }

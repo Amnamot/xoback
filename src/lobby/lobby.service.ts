@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v20
+// src/lobby/lobby.service.ts v21
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,7 +6,6 @@ import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import { randomBytes } from 'crypto';
-import axios from 'axios';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
@@ -107,6 +106,15 @@ export class LobbyService {
       }
     }
     throw new NotFoundException('Lobby not found');
+  }
+
+  async cancelLobbyPublic(lobbyId: string, telegramId: string) {
+    const value = await this.redis.get(lobbyId);
+    if (value && value === telegramId) {
+      await this.redis.del(lobbyId);
+      return { success: true };
+    }
+    throw new NotFoundException('Lobby not found or unauthorized');
   }
 
   async joinLobby(tgId: string, lobbyId: string) {
