@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v19
+// src/lobby/lobby.service.ts v20
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -115,7 +115,7 @@ export class LobbyService {
       throw new NotFoundException('Lobby not found');
     }
     if (ownerTgId === tgId.toString()) {
-      throw new ForbiddenException('Cannot join own lobby');
+      return { status: 'creator' };
     }
     return { success: true };
   }
