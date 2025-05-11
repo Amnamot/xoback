@@ -1,11 +1,12 @@
-// src/lobby/lobby.controller.ts v5
+// src/lobby/lobby.controller.ts v6
 import {
   Controller,
   Post,
   Req,
   UseGuards,
   Delete,
-  Body
+  Body,
+  Get
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
 import { Request } from 'express';
@@ -43,5 +44,11 @@ export class LobbyController {
   @UseGuards(AuthGuard)
   joinLobby(@Req() req: RequestWithAuth, @Body() body: { lobbyId: string }) {
     return this.lobbyService.joinLobby(req.tgId, body.lobbyId);
+  }
+
+  @Get('timeleft')
+  @UseGuards(AuthGuard)
+  getTimeLeft(@Req() req: RequestWithAuth) {
+    return this.lobbyService.getTimeLeft(req.tgId);
   }
 }

@@ -1,4 +1,4 @@
-// src/lobby/lobby.service.ts v18
+// src/lobby/lobby.service.ts v19
 import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InitDataParsed } from '../utils/init-data.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -74,10 +74,7 @@ export class LobbyService {
       title: "Invitation to the game!",
       description: "Click to accept the call!",
       input_message_content: {
-        message_text: `❌ Invitation to the game ⭕️
-
-${firstName} invites you
-to fight in endless TicTacToe`,
+        message_text: `❌ Invitation to the game ⭕️\n\n${firstName} invites you\nto fight in endless TicTacToe`,
       },
       reply_markup: {
         inline_keyboard: [[
@@ -121,5 +118,17 @@ to fight in endless TicTacToe`,
       throw new ForbiddenException('Cannot join own lobby');
     }
     return { success: true };
+  }
+
+  async getTimeLeft(tgId: string) {
+    const keys = await this.redis.keys('lobby_*');
+    for (const key of keys) {
+      const value = await this.redis.get(key);
+      if (value === tgId.toString()) {
+        const ttl = await this.redis.ttl(key);
+        return { timeLeft: ttl };
+      }
+    }
+    throw new NotFoundException('Lobby not found');
   }
 }
