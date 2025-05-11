@@ -1,10 +1,11 @@
-// src/lobby/lobby.controller.ts v4
+// src/lobby/lobby.controller.ts v5
 import {
   Controller,
   Post,
   Req,
   UseGuards,
-  Body,
+  Delete,
+  Body
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
 import { Request } from 'express';
