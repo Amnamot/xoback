@@ -53,7 +53,7 @@ export class LobbyController {
   }
 
   @Delete('cancel')
-  cancelLobbyPublic(@Body() body: { lobbyId: string, telegramId: string }) {
+  cancelLobbyPublic(@Body() body: { lobbyId: string; telegramId: string }) {
     return this.lobbyService.cancelLobbyPublic(body.lobbyId, body.telegramId);
   }
 }
