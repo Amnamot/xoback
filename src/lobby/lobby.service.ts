@@ -96,18 +96,6 @@ export class LobbyService {
     return { messageId: data.result.id, lobbyId };
   }
 
-  async cancelLobby(tgId: string) {
-    const keys = await this.redis.keys('lobby_*');
-    for (const key of keys) {
-      const value = await this.redis.get(key);
-      if (value === tgId.toString()) {
-        await this.redis.del(key);
-        return { success: true };
-      }
-    }
-    throw new NotFoundException('Lobby not found');
-  }
-
   async cancelLobbyPublic(lobbyId: string, telegramId: string) {
     const value = await this.redis.get(lobbyId);
     if (value && value === telegramId) {

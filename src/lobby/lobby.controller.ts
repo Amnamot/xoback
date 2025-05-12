@@ -34,12 +34,6 @@ export class LobbyController {
     return this.lobbyService.createInvite(req.tgId);
   }
 
-  @Post('cancel')
-  @UseGuards(AuthGuard)
-  cancelLobby(@Req() req: RequestWithAuth) {
-    return this.lobbyService.cancelLobby(req.tgId);
-  }
-
   @Post('join')
   @UseGuards(AuthGuard)
   joinLobby(@Req() req: RequestWithAuth, @Body() body: { lobbyId: string }) {
