@@ -8,7 +8,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: ['https://igra.top'], // ✅ разрешённый фронтовый домен
+    origin: ['https://igra.top', 'wss://igra.top'], // ✅ разрешённый фронтовый домен и WebSocket
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'x-init-data'], // ✅ разрешённые заголовки
