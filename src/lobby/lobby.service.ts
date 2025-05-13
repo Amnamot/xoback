@@ -49,14 +49,21 @@ export class LobbyService {
   }
 
   async createInvite(tgId: string) {
+    console.log('🔍 Creating invite for telegramId:', tgId);
     const user = await this.prisma.user.findUnique({ where: { telegramId: tgId.toString() } });
     const firstName = user?.firstName || "Gamer";
 
     const keys = await this.redis.keys('lobby_*');
+    console.log('📋 Found Redis keys:', keys);
     let lobbyId: string | null = null;
 
     for (const key of keys) {
       const value = await this.redis.get(key);
+      console.log(`🔑 Checking lobby ${key}:`, {
+        value,
+        expectedTgId: tgId.toString(),
+        matches: value === tgId.toString()
+      });
       if (value === tgId.toString()) {
         lobbyId = key;
         break;
@@ -64,8 +71,11 @@ export class LobbyService {
     }
 
     if (!lobbyId) {
+      console.log('❌ No matching lobby found for telegramId:', tgId);
       throw new ForbiddenException('Lobby not found');
     }
+
+    console.log('✅ Found lobby:', lobbyId);
 
     const result = {
       type: "article",
