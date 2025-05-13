@@ -3,6 +3,7 @@ export interface Lobby {
   id: string;           // ID лобби
   creatorId: string;    // telegramId создателя
   createdAt: number;    // время создания
+  status: 'active' | 'pending' | 'closed';  // статус лобби
 }
 
 // Структура активной игровой сессии
