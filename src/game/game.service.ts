@@ -182,22 +182,6 @@ export class GameService {
       lastMoveTime: Date.now()
     };
 
-    // Создаем запись в БД
-    const game = await this.prisma.game.create({
-      data: {
-        createdBy: session.creatorId,
-        rival: session.opponentId,
-        pay: session.pay,
-        numMoves: 0,
-        time: 0,
-        playertime1: 0,
-        playertime2: 0,
-        created: new Date(session.startedAt),
-        finished: new Date(session.startedAt), // обновим при завершении
-      }
-    });
-
-    session.dbId = game.id;
     this.activeSessions.set(session.id, session);
     
     // Удаляем лобби
@@ -235,10 +219,7 @@ export class GameService {
       // Проверяем в БД
       const game = await this.prisma.game.findFirst({
         where: {
-          OR: [
-            { id: parseInt(gameId) },
-            { lobbyId: gameId }
-          ]
+          id: parseInt(gameId)
         }
       });
 
@@ -266,17 +247,20 @@ export class GameService {
       throw new Error('Game session not found');
     }
 
-    // Обновляем запись в БД
-    await this.prisma.game.update({
-      where: { id: session.dbId },
+    // Создаем запись в БД
+    const game = await this.prisma.game.create({
       data: {
-        finished: new Date(),
+        createdBy: session.creatorId,
+        rival: session.opponentId,
         winner: winnerId,
         reason: reason,
+        pay: session.pay,
         numMoves: session.numMoves,
         time: Math.floor((Date.now() - session.startedAt) / 1000),
         playertime1: Math.floor(session.playerTime1 / 1000),
         playertime2: Math.floor(session.playerTime2 / 1000),
+        created: new Date(session.startedAt),
+        finished: new Date()
       }
     });
 

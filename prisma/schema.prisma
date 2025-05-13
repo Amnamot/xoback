@@ -27,7 +27,8 @@ model Game {
   finished     DateTime
   createdBy    String   // telegramId создателя
   rival        String   // telegramId соперника
-  winner       String   // telegramId победителя
+  winner       String?  // telegramId победителя, опционально
+  reason       String?  // причина завершения игры
   numMoves     Int
   pay          Boolean
   time         Int      // общее время игры в секундах
