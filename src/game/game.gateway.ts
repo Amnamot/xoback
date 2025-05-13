@@ -15,13 +15,19 @@ import { GameService } from './game.service';
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: ['https://igra.top', 'wss://igra.top'],
-    credentials: true
+    origin: ['https://igra.top', 'http://igra.top', 'http://localhost:3000', 'http://localhost:3001'],
+    credentials: true,
+    methods: ['GET', 'POST']
   },
   path: '/socket.io/',
   transports: ['websocket', 'polling'],
   allowEIO3: true,
-  allowUpgrades: true
+  allowUpgrades: true,
+  cookie: {
+    name: 'io',
+    httpOnly: true,
+    path: '/'
+  }
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
