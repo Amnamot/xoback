@@ -17,8 +17,11 @@ class CustomIoAdapter extends IoAdapter {
       },
       allowEIO3: true,
       transports: ['websocket', 'polling'],
+      path: '/socket.io/',
       pingTimeout: 60000,
-      pingInterval: 25000
+      pingInterval: 25000,
+      connectTimeout: 45000,
+      upgradeTimeout: 30000
     });
     return server;
   }
@@ -35,7 +38,8 @@ async function bootstrap() {
   });
 
   // Настраиваем WebSocket
-  app.useWebSocketAdapter(new CustomIoAdapter(app));
+  const wsAdapter = new CustomIoAdapter(app);
+  app.useWebSocketAdapter(wsAdapter);
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
