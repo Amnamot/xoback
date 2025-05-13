@@ -7,6 +7,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LobbyModule } from './lobby/lobby.module';
 import { UtilsModule } from './utils/utils.module';
 import { RedisModule } from '@nestjs-modules/ioredis';
+import { GameModule } from './game/game.module';
+import { AppConfigModule } from './config/config.module';
 
 @Module({
   imports: [
@@ -15,6 +17,8 @@ import { RedisModule } from '@nestjs-modules/ioredis';
     UserModule,
     LobbyModule,
     UtilsModule,
+    GameModule,
+    AppConfigModule,
     RedisModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
