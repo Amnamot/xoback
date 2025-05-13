@@ -12,11 +12,13 @@ class CustomIoAdapter extends IoAdapter {
       cors: {
         origin: ['https://igra.top', 'http://igra.top', 'http://localhost:3000', 'http://localhost:3001'],
         credentials: true,
-        methods: ['GET', 'POST'],
-        allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId']
+        methods: ['GET', 'POST', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId', 'connect-src']
       },
       allowEIO3: true,
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      pingTimeout: 60000,
+      pingInterval: 25000
     });
     return server;
   }
@@ -29,7 +31,7 @@ async function bootstrap() {
     origin: ['https://igra.top', 'http://igra.top', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId'], // добавляем telegramId
+    allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId', 'connect-src'],
   });
 
   // Настраиваем WebSocket
