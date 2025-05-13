@@ -8,9 +8,19 @@ import {
   MessageBody
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UsePipes, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GameService } from './game.service';
+import {
+  CreateLobbyDto,
+  JoinLobbyDto,
+  MakeMoveDto,
+  UpdatePlayerTimeDto,
+  UpdateViewportDto,
+  GameOverDto,
+  JoinGameDto,
+  TimeExpiredDto
+} from './dto/socket.dto';
 
 @Injectable()
 @WebSocketGateway({
@@ -217,20 +227,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('createLobby')
+  @UsePipes(new ValidationPipe())
   async handleCreateLobby(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { telegramId: string }
+    @MessageBody() data: CreateLobbyDto
   ) {
     try {
-      const { telegramId } = data;
-      const lobby = await this.gameService.createLobby(telegramId);
+      const lobby = await this.gameService.createLobby(data.telegramId);
       
       if (!lobby) {
         return { status: 'error', message: 'Failed to create lobby' };
       }
 
       // Сохраняем связь клиент-лобби
-      this.clientLobbies.set(telegramId, lobby.id);
+      this.clientLobbies.set(data.telegramId, lobby.id);
       
       // Добавляем клиента в комнату лобби
       client.join(lobby.id);
@@ -246,12 +256,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('joinLobby')
+  @UsePipes(new ValidationPipe())
   async handleJoinLobby(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { lobbyId: string, telegramId: string }
+    @MessageBody() data: JoinLobbyDto
   ) {
-    const { lobbyId, telegramId } = data;
-    const lobby = await this.gameService.getLobby(lobbyId);
+    const lobby = await this.gameService.getLobby(data.lobbyId);
 
     if (!lobby) {
       return { status: 'error', message: 'Lobby not found' };
@@ -261,26 +271,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { status: 'error', message: 'Lobby is not active' };
     }
 
-    if (lobby.creatorId === telegramId) {
-      client.join(lobbyId);
+    if (lobby.creatorId === data.telegramId) {
+      client.join(data.lobbyId);
       return { status: 'creator' };
     }
 
     // Создаем игровую сессию
-    const session = await this.gameService.createGameSession(lobbyId, telegramId);
-    client.join(lobbyId);
+    const session = await this.gameService.createGameSession(data.lobbyId, data.telegramId);
+    client.join(data.lobbyId);
     
     // Сохраняем связь игроков с игрой
-    this.clientGames.set(lobby.creatorId, lobbyId);
-    this.clientGames.set(telegramId, lobbyId);
+    this.clientGames.set(lobby.creatorId, data.lobbyId);
+    this.clientGames.set(data.telegramId, data.lobbyId);
     
     // Очищаем связь с лобби
     this.clientLobbies.delete(lobby.creatorId);
     
     // Уведомляем обоих игроков о начале игры
-    this.server.to(lobbyId).emit('gameStart', {
+    this.server.to(data.lobbyId).emit('gameStart', {
       creator: lobby.creatorId,
-      opponent: telegramId,
+      opponent: data.telegramId,
       session
     });
 
@@ -288,12 +298,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('makeMove')
+  @UsePipes(new ValidationPipe())
   async handleMove(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string, position: { row: number, col: number }, player: string, moveTime: number }
+    @MessageBody() data: MakeMoveDto
   ) {
-    const { gameId, position, player, moveTime } = data;
-    const session = await this.gameService.getGameSession(gameId);
+    const session = await this.gameService.getGameSession(data.gameId);
     
     if (!session) {
       return { status: 'error', message: 'Game session not found' };
@@ -301,18 +311,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const currentTime = Date.now();
     const timeSinceLastMove = currentTime - session.lastMoveTime;
-    const MAX_MOVE_TIME = 30000; // 30 секунд на ход
+    const MAX_MOVE_TIME = 30000;
 
-    // Проверяем, не истекло ли время хода
     if (timeSinceLastMove > MAX_MOVE_TIME) {
-      // Определяем победителя (тот, кто не должен был ходить)
       const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
       
-      // Завершаем игру
-      await this.gameService.endGameSession(gameId, winner);
+      await this.gameService.endGameSession(data.gameId, winner);
       
-      // Уведомляем всех игроков
-      this.server.to(gameId).emit('gameEnded', {
+      this.server.to(data.gameId).emit('gameEnded', {
         winner,
         reason: 'timeout',
         statistics: {
@@ -324,34 +330,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       });
 
-      // Очищаем связи с игрой
       this.clientGames.delete(session.creatorId);
       this.clientGames.delete(session.opponentId);
 
       return { status: 'error', message: 'Move time expired' };
     }
 
-    const isCreator = player === session.creatorId;
+    const isCreator = data.player === session.creatorId;
 
-    // Проверяем, чей сейчас ход
-    if (player !== session.currentTurn) {
+    if (data.player !== session.currentTurn) {
       return { status: 'error', message: 'Not your turn' };
     }
 
-    // Обновляем время игрока, который сделал ход
-    const updatedSession = await this.gameService.updateGameSession(gameId, {
-      playerTime1: isCreator ? session.playerTime1 + moveTime : session.playerTime1,
-      playerTime2: !isCreator ? session.playerTime2 + moveTime : session.playerTime2,
+    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
+      playerTime1: isCreator ? session.playerTime1 + data.moveTime : session.playerTime1,
+      playerTime2: !isCreator ? session.playerTime2 + data.moveTime : session.playerTime2,
       lastMoveTime: currentTime,
       currentTurn: isCreator ? session.opponentId : session.creatorId,
       numMoves: session.numMoves + 1
     });
 
-    // Отправляем обновление всем игрокам с серверным временем
-    this.server.to(gameId).emit('moveMade', {
+    this.server.to(data.gameId).emit('moveMade', {
       moveId: `move_${currentTime}`,
-      position,
-      player,
+      position: data.position,
+      player: data.player,
       gameState: {
         currentTurn: updatedSession.currentTurn,
         playerTime1: updatedSession.playerTime1,
@@ -360,7 +362,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         serverTime: currentTime,
         moveStartTime: currentTime,
         gameStartTime: session.startedAt,
-        timeLeft: MAX_MOVE_TIME // сбрасываем таймер хода
+        timeLeft: MAX_MOVE_TIME
       }
     });
 
@@ -368,25 +370,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('updatePlayerTime')
+  @UsePipes(new ValidationPipe())
   async handleTimeUpdate(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string, playerTimes: { playerTime1: number, playerTime2: number } }
+    @MessageBody() data: UpdatePlayerTimeDto
   ) {
-    const { gameId, playerTimes } = data;
-    const session = await this.gameService.getGameSession(gameId);
+    const session = await this.gameService.getGameSession(data.gameId);
     
     if (!session) {
       return { status: 'error', message: 'Game session not found' };
     }
 
-    // Обновляем время обоих игроков
-    const updatedSession = await this.gameService.updateGameSession(gameId, {
-      playerTime1: playerTimes.playerTime1,
-      playerTime2: playerTimes.playerTime2
+    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
+      playerTime1: data.playerTimes.playerTime1,
+      playerTime2: data.playerTimes.playerTime2
     });
 
-    // Отправляем обновление времени всем игрокам
-    this.server.to(gameId).emit('timeUpdated', {
+    this.server.to(data.gameId).emit('timeUpdated', {
       playerTime1: updatedSession.playerTime1,
       playerTime2: updatedSession.playerTime2
     });
@@ -395,16 +395,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('gameOver')
+  @UsePipes(new ValidationPipe())
   async handleGameOver(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string, winner: string }
+    @MessageBody() data: GameOverDto
   ) {
-    const { gameId, winner } = data;
-    await this.gameService.endGameSession(gameId, winner);
-    this.server.to(gameId).emit('gameEnded', { winner });
+    await this.gameService.endGameSession(data.gameId, data.winner);
+    this.server.to(data.gameId).emit('gameEnded', { winner: data.winner });
     
-    // Очищаем связи игроков с игрой
-    const session = await this.gameService.getGameSession(gameId);
+    const session = await this.gameService.getGameSession(data.gameId);
     if (session) {
       this.clientGames.delete(session.creatorId);
       this.clientGames.delete(session.opponentId);
@@ -412,39 +411,34 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('joinGame')
+  @UsePipes(new ValidationPipe())
   async handleJoinGame(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string, telegramId: string }
+    @MessageBody() data: JoinGameDto
   ) {
-    const { gameId, telegramId } = data;
-    
-    // Сохраняем связь игрока с игрой
-    this.clientGames.set(telegramId, gameId);
-    client.join(gameId);
+    this.clientGames.set(data.telegramId, data.gameId);
+    client.join(data.gameId);
     
     return { status: 'joined' };
   }
 
   @SubscribeMessage('timeExpired')
+  @UsePipes(new ValidationPipe())
   async handleTimeExpired(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string, player: string }
+    @MessageBody() data: TimeExpiredDto
   ) {
-    const { gameId, player } = data;
-    const session = await this.gameService.getGameSession(gameId);
+    const session = await this.gameService.getGameSession(data.gameId);
     
     if (!session) {
       return { status: 'error', message: 'Game session not found' };
     }
 
-    // Определяем победителя (противник того, у кого закончилось время)
-    const winner = player === session.creatorId ? session.opponentId : session.creatorId;
+    const winner = data.player === session.creatorId ? session.opponentId : session.creatorId;
 
-    // Завершаем игру
-    await this.gameService.endGameSession(gameId, winner);
+    await this.gameService.endGameSession(data.gameId, winner);
 
-    // Уведомляем всех игроков о завершении игры
-    this.server.to(gameId).emit('gameEnded', {
+    this.server.to(data.gameId).emit('gameEnded', {
       winner,
       reason: 'timeout',
       statistics: {
