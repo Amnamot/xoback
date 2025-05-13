@@ -15,7 +15,7 @@ import { GameService } from './game.service';
 @Injectable()
 @WebSocketGateway({
   cors: {
-    origin: [process.env.SOCKET_URL || 'https://igra.top'],
+    origin: ['https://igra.top', 'wss://igra.top'],
     credentials: true
   }
 })
