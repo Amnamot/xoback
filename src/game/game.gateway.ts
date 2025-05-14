@@ -90,7 +90,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     console.log('👋 Client connected:', {
       telegramId,
-      socketId: client.id
+      socketId: client.id,
+      rooms: Array.from(client.rooms)
     });
 
     // Очищаем таймер на удаление лобби, если он есть
@@ -104,9 +105,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (lobby && lobby.status === 'pending') {
         await this.gameService.restoreLobby(lobby.id);
         client.join(lobby.id);
-        console.log('🔄 Restored pending lobby:', {
+        
+        // Отправляем событие о готовности лобби
+        this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
-          creatorId: telegramId
+          timestamp: Date.now()
+        });
+
+        console.log('🔄 Restored lobby and sent ready event:', {
+          lobbyId: lobby.id,
+          creatorId: telegramId,
+          rooms: Array.from(client.rooms),
+          status: lobby.status
         });
       }
     }
@@ -191,8 +201,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.clientGames.delete(telegramId);
       }
     }
-
-    console.log(`Client connected: ${telegramId}`);
   }
 
   async handleDisconnect(client: Socket) {
@@ -247,8 +255,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.reconnectTimeouts.set(telegramId, timeout);
       }
     }
-
-    console.log(`Client disconnected: ${telegramId}`);
   }
 
   @SubscribeMessage('createLobby')
