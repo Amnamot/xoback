@@ -700,6 +700,32 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  @SubscribeMessage('checkActiveLobby')
+  async handleCheckActiveLobby(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { telegramId: string }
+  ) {
+    try {
+      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      
+      if (lobby) {
+        // Получаем оставшееся время TTL
+        const ttl = await this.redis.ttl(lobby.id);
+        
+        return {
+          lobbyId: lobby.id,
+          ttl: ttl > 0 ? ttl : 180, // Если TTL истек, возвращаем дефолтное значение
+          status: lobby.status
+        };
+      }
+      
+      return { lobbyId: null };
+    } catch (error) {
+      console.error('Error checking active lobby:', error);
+      return { error: 'Failed to check active lobby' };
+    }
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
