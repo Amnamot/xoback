@@ -220,8 +220,8 @@ export class GameService {
         lobby.status = 'pending';
         
         const multi = this.redis.multi();
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 10);
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 10);
+        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 30);
+        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 30);
         
         console.log('💾 Executing Redis transaction for pending status');
         const results = await multi.exec();
@@ -283,6 +283,11 @@ export class GameService {
 
         lobby.status = 'closed';
         this.activeLobbies.delete(lobbyId);
+        
+        // Очищаем rate limit данные для создателя лобби
+        this.userLobbyRequests.delete(lobby.creatorId);
+        console.log('🧹 Cleaned up rate limit data for creator:', lobby.creatorId);
+        
         console.log('✅ Lobby successfully deleted:', lobbyId);
       } else {
         console.warn('⚠️ Lobby not found in memory:', lobbyId);
@@ -413,6 +418,16 @@ export class GameService {
       if (!lobbyExists || !indexExists) {
         // Очищаем неконсистентные данные
         await this.deleteLobby(lobby.id);
+        // Rate limit данные будут очищены в методе deleteLobby
+      }
+    }
+    
+    // Очищаем устаревшие rate limit данные
+    const now = Date.now();
+    for (const [telegramId, request] of this.userLobbyRequests.entries()) {
+      if (now - request.timestamp > 60000) { // Прошла минута
+        this.userLobbyRequests.delete(telegramId);
+        console.log('🧹 Cleaned up expired rate limit data for:', telegramId);
       }
     }
   }

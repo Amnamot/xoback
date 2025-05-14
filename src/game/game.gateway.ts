@@ -27,6 +27,8 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { randomBytes } from 'crypto';
+import { InjectRedis } from '@nestjs-modules/ioredis';
+import { Redis } from 'ioredis';
 
 @Injectable()
 @WebSocketGateway({
@@ -53,7 +55,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly gameService: GameService,
     private readonly configService: ConfigService,
-    private readonly httpService: HttpService
+    private readonly httpService: HttpService,
+    @InjectRedis() private readonly redis: Redis,
   ) {
     console.log('WebSocket URL:', this.configService.get('SOCKET_URL'));
     
@@ -85,12 +88,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Проверяем существующее подключение
-    const existingSocket = this.connectedClients.get(telegramId);
-    if (existingSocket && existingSocket.connected) {
-      // Отключаем предыдущее соединение
-      existingSocket.emit('multipleConnections', { message: 'New connection detected' });
-      existingSocket.disconnect();
+    console.log('👋 Client connected:', {
+      telegramId,
+      socketId: client.id
+    });
+
+    // Очищаем таймер на удаление лобби, если он есть
+    const disconnectTimeout = this.reconnectTimeouts.get(telegramId);
+    if (disconnectTimeout) {
+      clearTimeout(disconnectTimeout);
+      this.reconnectTimeouts.delete(telegramId);
+      
+      // Проверяем и восстанавливаем лобби
+      const lobby = await this.gameService.findLobbyByCreator(telegramId);
+      if (lobby && lobby.status === 'pending') {
+        await this.gameService.restoreLobby(lobby.id);
+        client.join(lobby.id);
+        console.log('🔄 Restored pending lobby:', {
+          lobbyId: lobby.id,
+          creatorId: telegramId
+        });
+      }
     }
 
     this.connectedClients.set(telegramId, client);
@@ -200,7 +218,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             reason: 'Creator disconnected and did not reconnect'
           });
         }
-      }, 10000); // 10 секунд на переподключение
+      }, 30000); // 10 секунд на переподключение
 
       this.reconnectTimeouts.set(telegramId, timeout);
     }
@@ -321,11 +339,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const lobby = await this.gameService.getLobby(data.lobbyId);
 
     if (!lobby) {
-      return { status: 'error', message: 'Lobby not found' };
+      return { 
+        status: 'error',
+        errorType: 'expired',
+        message: 'Either the battle is over, or the link is very old...'
+      };
     }
 
-    if (lobby.status !== 'active') {
-      return { status: 'error', message: 'Lobby is not active' };
+    if (lobby.status === 'pending') {
+      // Проверяем, подключен ли создатель
+      const creatorSocket = this.connectedClients.get(lobby.creatorId);
+      if (!creatorSocket || !creatorSocket.connected) {
+        // Получаем оставшееся время TTL
+        const ttl = await this.redis.ttl(lobby.id);
+        return { 
+          status: 'error',
+          errorType: 'disconnected',
+          ttl: ttl > 0 ? ttl : 30,
+          message: 'Lobby creator is currently disconnected.<br />We are waiting for his connection'
+        };
+      }
     }
 
     if (lobby.creatorId === data.telegramId) {
