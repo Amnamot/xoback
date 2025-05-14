@@ -232,25 +232,54 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateLobbyDto
   ) {
+    console.log('🎮 Handling createLobby request:', { telegramId: data.telegramId, socketId: client.id });
+    
     try {
+      // Создание лобби через GameService
       const lobby = await this.gameService.createLobby(data.telegramId);
       
       if (!lobby) {
-        return { status: 'error', message: 'Failed to create lobby' };
+        console.warn('⚠️ Lobby creation returned null');
+        return { 
+          status: 'error',
+          message: 'Failed to create lobby: null response',
+          timestamp: Date.now()
+        };
       }
-
+      
+      console.log('✅ Lobby created:', { lobbyId: lobby.id, creatorId: data.telegramId });
+      
       // Сохраняем связь клиент-лобби
       this.clientLobbies.set(data.telegramId, lobby.id);
+      console.log('🔗 Client-lobby association saved:', { telegramId: data.telegramId, lobbyId: lobby.id });
       
       // Добавляем клиента в комнату лобби
       client.join(lobby.id);
+      console.log('👥 Client joined lobby room:', { socketId: client.id, lobbyId: lobby.id });
       
-      return { status: 'created', lobbyId: lobby.id };
-    } catch (error) {
-      console.error('Error in handleCreateLobby:', error);
+      // Отправляем событие о готовности лобби
+      client.emit('lobbyReady', { 
+        lobbyId: lobby.id,
+        timestamp: Date.now()
+      });
+      console.log('📢 Lobby ready event emitted:', { lobbyId: lobby.id });
+      
       return { 
-        status: 'error', 
-        message: error instanceof Error ? error.message : 'Failed to create lobby'
+        status: 'created', 
+        lobbyId: lobby.id,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('❌ Error in handleCreateLobby:', error);
+      
+      // Очищаем связи при ошибке
+      this.clientLobbies.delete(data.telegramId);
+      console.log('🧹 Cleaned up client-lobby association for:', data.telegramId);
+      
+      return { 
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Failed to create lobby',
+        timestamp: Date.now()
       };
     }
   }
