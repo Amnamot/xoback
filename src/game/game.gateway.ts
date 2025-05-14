@@ -360,7 +360,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       lobbyId: data.lobbyId,
       telegramId: data.telegramId,
       socketId: client.id,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      clientRooms: Array.from(client.rooms),
+      query: client.handshake.query,
+      headers: client.handshake.headers
     });
 
     const lobby = await this.gameService.getLobby(data.lobbyId);
@@ -368,7 +371,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!lobby) {
       console.warn('❌ Lobby not found:', {
         lobbyId: data.lobbyId,
-        timestamp: new Date().toISOString()
+        requestedBy: data.telegramId,
+        timestamp: new Date().toISOString(),
+        socketId: client.id
       });
       return { 
         status: 'error',
@@ -381,7 +386,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       lobbyId: lobby.id,
       creatorId: lobby.creatorId,
       status: lobby.status,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      joiningPlayer: data.telegramId,
+      socketId: client.id
     });
 
     if (lobby.status === 'pending') {
@@ -394,7 +401,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           lobbyId: lobby.id,
           creatorId: lobby.creatorId,
           ttl: ttl,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          joiningPlayer: data.telegramId,
+          socketId: client.id,
+          creatorSocketId: creatorSocket?.id
         });
         return { 
           status: 'error',
@@ -409,7 +419,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('👑 Creator joining their own lobby:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        socketId: client.id,
+        clientRooms: Array.from(client.rooms)
       });
       client.join(data.lobbyId);
       return { status: 'creator' };
@@ -420,7 +432,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: data.lobbyId,
         creatorId: lobby.creatorId,
         opponentId: data.telegramId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        socketId: client.id,
+        creatorSocket: this.connectedClients.get(lobby.creatorId)?.id
       });
 
       // Создаем игровую сессию
@@ -439,7 +453,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: data.lobbyId,
         creatorId: lobby.creatorId,
         opponentId: data.telegramId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        roomSize: this.server.sockets.adapter.rooms.get(data.lobbyId)?.size || 0,
+        creatorSocketId: this.connectedClients.get(lobby.creatorId)?.id,
+        opponentSocketId: client.id
       });
       
       // Уведомляем обоих игроков о начале игры
@@ -453,7 +470,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         sessionId: session.id,
         lobbyId: data.lobbyId,
         roomSize: this.server.sockets.adapter.rooms.get(data.lobbyId)?.size || 0,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        creatorSocketId: this.connectedClients.get(lobby.creatorId)?.id,
+        opponentSocketId: client.id,
+        activeConnections: this.connectedClients.size,
+        activeGames: this.clientGames.size
       });
 
       return { status: 'joined' };
@@ -463,7 +484,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         stack: error instanceof Error ? error.stack : undefined,
         lobbyId: data.lobbyId,
         telegramId: data.telegramId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        socketId: client.id,
+        clientRooms: Array.from(client.rooms)
       });
       
       return {
