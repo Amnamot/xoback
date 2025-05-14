@@ -108,22 +108,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         
         // Получаем оставшееся время TTL для pending статуса
         const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
+        const ttl = pendingTTL > 0 ? pendingTTL : 30;
+        
+        // Устанавливаем флаги для показа WaitModal
+        client.emit('setShowWaitModal', {
+          show: true,
+          ttl: ttl
+        });
         
         // Отправляем событие о готовности лобби
         this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
           timestamp: Date.now(),
-          ttl: pendingTTL > 0 ? pendingTTL : 30 // Используем оставшееся время или 30 секунд по умолчанию
-        });
-
-        // Отправляем событие для восстановления WaitModal с корректным TTL
-        client.emit('uiState', {
-          state: 'waitModal',
-          telegramId,
-          details: {
-            timeLeft: pendingTTL > 0 ? pendingTTL : 30,
-            isReconnect: true
-          }
+          ttl: ttl
         });
 
         console.log('🔄 Restored lobby and sent ready event:', {
@@ -131,7 +128,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           creatorId: telegramId,
           rooms: Array.from(client.rooms),
           status: lobby.status,
-          pendingTTL
+          pendingTTL: ttl
         });
       }
     }
@@ -604,16 +601,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         thumbnail_height: 300,
       };
 
+      console.log('📤 Preparing Telegram API request:', {
+        result,
+        timestamp: new Date().toISOString()
+      });
+
       // Отправляем сообщение через Telegram Bot API
       const BOT_TOKEN = this.configService.get("BOT_TOKEN");
       const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
       const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+      
+      console.log('🔗 Telegram API URL (without token):', url.replace(BOT_TOKEN, 'BOT_TOKEN'));
 
       const { data: response } = await firstValueFrom(this.httpService.get(url));
       
-      console.log('✅ Invite created:', { 
-        messageId: response.result.id, 
-        lobbyId: lobby.id 
+      console.log('📨 Telegram API response:', {
+        response,
+        timestamp: new Date().toISOString()
       });
 
       return { 
