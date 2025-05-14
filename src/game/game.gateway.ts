@@ -665,6 +665,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('uiState')
+  async handleUiState(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss', telegramId: string, details?: any }
+  ) {
+    const states: Record<string, string> = {
+      'loader': '⌛ User on Loader screen',
+      'startScreen': '🎮 User on Start screen',
+      'waitModal': '⏳ WaitModal is shown',
+      'loss': '❌ User on Loss screen'
+    };
+
+    console.log(`${states[data.state] || '🔄 UI State change'}:`, {
+      telegramId: data.telegramId,
+      socketId: client.id,
+      state: data.state,
+      ...(data.details && { details: data.details })
+    });
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
