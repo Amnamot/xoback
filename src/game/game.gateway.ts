@@ -596,7 +596,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             }
           ]]
         },
-        thumbnail_url: "https://igra.top/inviteImg.png",
+        thumbnail_url: "https://brown-real-meerkat-526.mypinata.cloud/ipfs/bafkreihszmccida3akvw4oshrwcixy5xnpimxiprjrnqo5aevzshj4foda",
         thumbnail_width: 300,
         thumbnail_height: 300,
       };
