@@ -258,7 +258,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('👥 Client joined lobby room:', { socketId: client.id, lobbyId: lobby.id });
       
       // Отправляем событие о готовности лобби
-      client.emit('lobbyReady', { 
+      this.server.to(lobby.id).emit('lobbyReady', { 
         lobbyId: lobby.id,
         timestamp: Date.now()
       });
