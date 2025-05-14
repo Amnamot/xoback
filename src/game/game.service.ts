@@ -220,8 +220,8 @@ export class GameService {
         lobby.status = 'pending';
         
         const multi = this.redis.multi();
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 30);
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 30);
+        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 35);
+        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 35);
         
         console.log('💾 Executing Redis transaction for pending status');
         const results = await multi.exec();
@@ -434,35 +434,46 @@ export class GameService {
 
   async findLobbyByCreator(creatorId: string): Promise<Lobby | null> {
     try {
-        // Сначала ищем в памяти
-        for (const [_, lobby] of this.activeLobbies) {
-            if (lobby.creatorId === creatorId) {
-                return lobby;
-            }
+      // Сначала ищем в памяти
+      for (const [_, lobby] of this.activeLobbies) {
+        if (lobby.creatorId === creatorId) {
+          return lobby;
         }
+      }
 
-        // Если не нашли в памяти, ищем в Redis
-        const keys = await this.redis.keys('lobby_*');
-        for (const key of keys) {
-            const value = await this.redis.get(key);
-            if (!value) continue;
+      // Если не нашли в памяти, ищем через индекс в Redis
+      const lobbyId = await this.redis.get(`user_lobby:${creatorId}`);
+      if (!lobbyId) return null;
 
-            try {
-                const lobbyData = JSON.parse(value);
-                if (lobbyData.creatorId === creatorId) {
-                    const lobby = lobbyData as Lobby;
-                    this.activeLobbies.set(lobby.id, lobby);
-                    return lobby;
-                }
-            } catch (error) {
-                console.error('❌ Error parsing lobby data:', error);
-            }
-        }
-
+      // Получаем данные лобби
+      const lobbyData = await this.redis.get(lobbyId);
+      if (!lobbyData) {
+        // Очищаем неактуальный индекс
+        await this.redis.del(`user_lobby:${creatorId}`);
         return null;
+      }
+
+      try {
+        const lobby = JSON.parse(lobbyData) as Lobby;
+        // Проверяем TTL
+        const ttl = await this.redis.ttl(lobbyId);
+        
+        // Если TTL истек или близок к истечению, считаем лобби недействительным
+        if (ttl <= 0) {
+          await this.deleteLobby(lobbyId);
+          return null;
+        }
+
+        // Сохраняем в память и возвращаем
+        this.activeLobbies.set(lobby.id, lobby);
+        return lobby;
+      } catch (error) {
+        console.error('❌ Error parsing lobby data:', error);
+        return null;
+      }
     } catch (error) {
-        console.error('Error finding lobby by creator:', error);
-        return null;
+      console.error('Error finding lobby by creator:', error);
+      return null;
     }
   }
 } 

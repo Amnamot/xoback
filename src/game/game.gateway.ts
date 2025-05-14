@@ -218,7 +218,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             reason: 'Creator disconnected and did not reconnect'
           });
         }
-      }, 30000); // 10 секунд на переподключение
+      }, 30000); // 30 секунд на переподключение
 
       this.reconnectTimeouts.set(telegramId, timeout);
     }
