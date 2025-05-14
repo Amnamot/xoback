@@ -104,19 +104,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const lobby = await this.gameService.findLobbyByCreator(telegramId);
       if (lobby && lobby.status === 'pending') {
         await this.gameService.restoreLobby(lobby.id);
-        client.join(lobby.id);
         
         // Получаем оставшееся время TTL для pending статуса
         const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
         const ttl = pendingTTL > 0 ? pendingTTL : 30;
+
+        // Сначала присоединяем клиента к комнате
+        client.join(lobby.id);
         
-        // Устанавливаем флаги для показа WaitModal
+        // Затем отправляем событие показа WaitModal
         client.emit('setShowWaitModal', {
           show: true,
           ttl: ttl
         });
         
-        // Отправляем событие о готовности лобби
+        // И только потом отправляем событие о готовности лобби
         this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
           timestamp: Date.now(),
