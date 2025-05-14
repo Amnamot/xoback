@@ -356,9 +356,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinLobbyDto
   ) {
+    console.log('🎮 Handling joinLobby request:', {
+      lobbyId: data.lobbyId,
+      telegramId: data.telegramId,
+      socketId: client.id,
+      timestamp: new Date().toISOString()
+    });
+
     const lobby = await this.gameService.getLobby(data.lobbyId);
 
     if (!lobby) {
+      console.warn('❌ Lobby not found:', {
+        lobbyId: data.lobbyId,
+        timestamp: new Date().toISOString()
+      });
       return { 
         status: 'error',
         errorType: 'expired',
@@ -366,12 +377,25 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       };
     }
 
+    console.log('✅ Lobby found:', {
+      lobbyId: lobby.id,
+      creatorId: lobby.creatorId,
+      status: lobby.status,
+      timestamp: new Date().toISOString()
+    });
+
     if (lobby.status === 'pending') {
       // Проверяем, подключен ли создатель
       const creatorSocket = this.connectedClients.get(lobby.creatorId);
       if (!creatorSocket || !creatorSocket.connected) {
         // Получаем оставшееся время TTL
         const ttl = await this.redis.ttl(lobby.id);
+        console.warn('⚠️ Creator disconnected:', {
+          lobbyId: lobby.id,
+          creatorId: lobby.creatorId,
+          ttl: ttl,
+          timestamp: new Date().toISOString()
+        });
         return { 
           status: 'error',
           errorType: 'disconnected',
@@ -382,29 +406,72 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     if (lobby.creatorId === data.telegramId) {
+      console.log('👑 Creator joining their own lobby:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
       client.join(data.lobbyId);
       return { status: 'creator' };
     }
 
-    // Создаем игровую сессию
-    const session = await this.gameService.createGameSession(data.lobbyId, data.telegramId);
-    client.join(data.lobbyId);
-    
-    // Сохраняем связь игроков с игрой
-    this.clientGames.set(lobby.creatorId, data.lobbyId);
-    this.clientGames.set(data.telegramId, data.lobbyId);
-    
-    // Очищаем связь с лобби
-    this.clientLobbies.delete(lobby.creatorId);
-    
-    // Уведомляем обоих игроков о начале игры
-    this.server.to(data.lobbyId).emit('gameStart', {
-      creator: lobby.creatorId,
-      opponent: data.telegramId,
-      session
-    });
+    try {
+      console.log('🎲 Creating game session:', {
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        opponentId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
 
-    return { status: 'joined' };
+      // Создаем игровую сессию
+      const session = await this.gameService.createGameSession(data.lobbyId, data.telegramId);
+      client.join(data.lobbyId);
+      
+      // Сохраняем связь игроков с игрой
+      this.clientGames.set(lobby.creatorId, data.lobbyId);
+      this.clientGames.set(data.telegramId, data.lobbyId);
+      
+      // Очищаем связь с лобби
+      this.clientLobbies.delete(lobby.creatorId);
+
+      console.log('✨ Game session created:', {
+        sessionId: session.id,
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        opponentId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Уведомляем обоих игроков о начале игры
+      this.server.to(data.lobbyId).emit('gameStart', {
+        creator: lobby.creatorId,
+        opponent: data.telegramId,
+        session
+      });
+
+      console.log('🚀 Game started:', {
+        sessionId: session.id,
+        lobbyId: data.lobbyId,
+        roomSize: this.server.sockets.adapter.rooms.get(data.lobbyId)?.size || 0,
+        timestamp: new Date().toISOString()
+      });
+
+      return { status: 'joined' };
+    } catch (error) {
+      console.error('❌ Error joining lobby:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        lobbyId: data.lobbyId,
+        telegramId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+      
+      return {
+        status: 'error',
+        errorType: 'join_failed',
+        message: 'Failed to join the game. Please try again.'
+      };
+    }
   }
 
   @SubscribeMessage('makeMove')
