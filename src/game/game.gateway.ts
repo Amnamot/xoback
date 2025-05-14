@@ -640,15 +640,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     console.log('🔄 Handling cancelLobby request:', {
       telegramId: data.telegramId,
-      socketId: client.id
+      socketId: client.id,
+      timestamp: new Date().toISOString()
     });
 
     try {
       // Находим лобби по создателю
+      console.log('🔍 Searching for lobby by creator:', data.telegramId);
       const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
       
       if (!lobby) {
-        console.warn('⚠️ No active lobby found for creator:', data.telegramId);
+        console.warn('⚠️ No active lobby found for creator:', {
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
         return {
           status: 'error',
           message: 'No active lobby found',
@@ -656,28 +661,58 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
+      console.log('🎯 Found lobby to cancel:', {
+        lobbyId: lobby.id,
+        status: lobby.status,
+        timestamp: new Date().toISOString()
+      });
+
       // Удаляем лобби
-      await this.gameService.deleteLobby(lobby.id);
+      console.log('🗑️ Attempting to delete lobby:', lobby.id);
+      try {
+        await this.gameService.deleteLobby(lobby.id);
+        console.log('✅ Lobby deleted from database:', lobby.id);
+      } catch (error) {
+        console.error('❌ Failed to delete lobby:', {
+          lobbyId: lobby.id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          timestamp: new Date().toISOString()
+        });
+        return {
+          status: 'error',
+          message: 'Failed to delete lobby',
+          timestamp: Date.now()
+        };
+      }
       
       // Очищаем связь клиент-лобби
+      console.log('🧹 Cleaning up client-lobby association for:', data.telegramId);
       this.clientLobbies.delete(data.telegramId);
       
       // Отправляем событие об удалении лобби всем в комнате
+      const timestamp = Date.now();
+      console.log('📢 Broadcasting lobbyDeleted event to room:', lobby.id);
       this.server.to(lobby.id).emit('lobbyDeleted', {
-        reason: 'Cancelled by creator'
+        reason: 'Cancelled by creator',
+        timestamp
       });
 
-      console.log('✅ Lobby successfully cancelled:', {
+      console.log('✅ Lobby cancellation completed:', {
         lobbyId: lobby.id,
-        creatorId: data.telegramId
+        creatorId: data.telegramId,
+        timestamp: new Date(timestamp).toISOString()
       });
 
       return {
         status: 'success',
-        timestamp: Date.now()
+        timestamp
       };
     } catch (error) {
-      console.error('❌ Error in handleCancelLobby:', error);
+      console.error('❌ Error in handleCancelLobby:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString()
+      });
       return {
         status: 'error',
         message: error instanceof Error ? error.message : 'Failed to cancel lobby',
