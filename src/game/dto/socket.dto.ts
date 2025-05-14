@@ -98,4 +98,9 @@ export class TimeExpiredDto {
 
     @IsString()
     player: string;
+}
+
+export class CreateInviteDto {
+    @IsString()
+    telegramId: string;
 } 

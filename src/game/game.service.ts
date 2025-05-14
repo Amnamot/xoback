@@ -416,4 +416,38 @@ export class GameService {
       }
     }
   }
+
+  async findLobbyByCreator(creatorId: string): Promise<Lobby | null> {
+    try {
+        // Сначала ищем в памяти
+        for (const [_, lobby] of this.activeLobbies) {
+            if (lobby.creatorId === creatorId) {
+                return lobby;
+            }
+        }
+
+        // Если не нашли в памяти, ищем в Redis
+        const keys = await this.redis.keys('lobby_*');
+        for (const key of keys) {
+            const value = await this.redis.get(key);
+            if (!value) continue;
+
+            try {
+                const lobbyData = JSON.parse(value);
+                if (lobbyData.creatorId === creatorId) {
+                    const lobby = lobbyData as Lobby;
+                    this.activeLobbies.set(lobby.id, lobby);
+                    return lobby;
+                }
+            } catch (error) {
+                console.error('❌ Error parsing lobby data:', error);
+            }
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error finding lobby by creator:', error);
+        return null;
+    }
+  }
 } 

@@ -45,6 +45,10 @@ export class LobbyService {
 
     const inviteUrl = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
 
+    console.log('✅ Lobby successfully created in Redis');
+    console.log('📦 Lobby saved in memory');
+    console.log('📢 Lobby ready event emitted');
+
     return { lobbyId, inviteUrl };
   }
 

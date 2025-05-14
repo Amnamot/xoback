@@ -20,8 +20,12 @@ import {
   UpdateViewportDto,
   GameOverDto,
   JoinGameDto,
-  TimeExpiredDto
+  TimeExpiredDto,
+  CreateInviteDto
 } from './dto/socket.dto';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 @WebSocketGateway({
@@ -47,7 +51,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   constructor(
     private readonly gameService: GameService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly httpService: HttpService
   ) {
     console.log('WebSocket URL:', this.configService.get('SOCKET_URL'));
     
@@ -501,6 +506,69 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     return { status: 'success' };
+  }
+
+  @SubscribeMessage('createInvite')
+  @UsePipes(new ValidationPipe())
+  async handleCreateInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: CreateInviteDto
+  ) {
+    console.log('🔍 Creating invite for telegramId:', data.telegramId);
+    
+    try {
+      // Получаем лобби из GameService
+      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      
+      if (!lobby) {
+        console.log('❌ No matching lobby found for telegramId:', data.telegramId);
+        return { error: 'Lobby not found' };
+      }
+
+      console.log('✅ Found lobby:', lobby.id);
+
+      // Формируем сообщение для отправки
+      const result = {
+        type: "article",
+        id: randomBytes(5).toString("hex"),
+        title: "Invitation to the game!",
+        description: "Click to accept the call!",
+        input_message_content: {
+          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe`,
+        },
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: "⚔️ Accept the battle 🛡",
+              url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+            }
+          ]]
+        },
+        thumbnail_url: "https://igra.top/media/inviteImg.png",
+        thumbnail_width: 300,
+        thumbnail_height: 300,
+      };
+
+      // Отправляем сообщение через Telegram Bot API
+      const BOT_TOKEN = this.configService.get("BOT_TOKEN");
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
+      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+
+      const { data: response } = await firstValueFrom(this.httpService.get(url));
+      
+      console.log('✅ Invite created:', { 
+        messageId: response.result.id, 
+        lobbyId: lobby.id 
+      });
+
+      return { 
+        messageId: response.result.id, 
+        lobbyId: lobby.id 
+      };
+    } catch (error) {
+      console.error('❌ Error creating invite:', error);
+      return { error: 'Failed to create invite' };
+    }
   }
 
   onModuleDestroy() {
