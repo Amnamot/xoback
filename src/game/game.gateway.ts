@@ -232,7 +232,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateLobbyDto
   ) {
-    console.log('🎮 Handling createLobby request:', { telegramId: data.telegramId, socketId: client.id });
+    console.log('🎮 Handling createLobby request:', { 
+      telegramId: data.telegramId, 
+      socketId: client.id,
+      rooms: Array.from(client.rooms),
+      adapter: this.server.sockets.adapter.rooms.size
+    });
     
     try {
       // Создание лобби через GameService
@@ -247,22 +252,38 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
       
-      console.log('✅ Lobby created:', { lobbyId: lobby.id, creatorId: data.telegramId });
+      console.log('✅ Lobby created:', { 
+        lobbyId: lobby.id, 
+        creatorId: data.telegramId,
+        status: lobby.status
+      });
       
       // Сохраняем связь клиент-лобби
       this.clientLobbies.set(data.telegramId, lobby.id);
-      console.log('🔗 Client-lobby association saved:', { telegramId: data.telegramId, lobbyId: lobby.id });
+      console.log('🔗 Client-lobby association saved:', { 
+        telegramId: data.telegramId, 
+        lobbyId: lobby.id,
+        mappingSize: this.clientLobbies.size
+      });
       
       // Добавляем клиента в комнату лобби
       client.join(lobby.id);
-      console.log('👥 Client joined lobby room:', { socketId: client.id, lobbyId: lobby.id });
+      console.log('👥 Client joined lobby room:', { 
+        socketId: client.id, 
+        lobbyId: lobby.id,
+        updatedRooms: Array.from(client.rooms)
+      });
       
       // Отправляем событие о готовности лобби
       this.server.to(lobby.id).emit('lobbyReady', { 
         lobbyId: lobby.id,
         timestamp: Date.now()
       });
-      console.log('📢 Lobby ready event emitted:', { lobbyId: lobby.id });
+      console.log('📢 Lobby ready event emitted:', { 
+        lobbyId: lobby.id,
+        roomSize: this.server.sockets.adapter.rooms.get(lobby.id)?.size || 0,
+        activeConnections: this.server.sockets.sockets.size
+      });
       
       return { 
         status: 'created', 
