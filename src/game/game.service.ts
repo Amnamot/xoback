@@ -82,16 +82,24 @@ export class GameService {
       }
 
       const lobbyId = `lobby_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      console.log('📝 Creating lobby:', { lobbyId, creatorId });
+
+      // Сохраняем в Redis с TTL
+      await this.redis.set(lobbyId, creatorId, 'EX', 180);
+      console.log('💾 Saved lobby in Redis:', { lobbyId, creatorId });
+      
       const lobby: Lobby = {
         id: lobbyId,
         creatorId,
         createdAt: Date.now(),
         status: 'active'
       };
-
-      // Сохраняем в Redis с TTL
-      await this.redis.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
       this.activeLobbies.set(lobbyId, lobby);
+      console.log('🗄️ Saved lobby in memory:', lobby);
+
+      // Проверяем, что лобби действительно сохранилось в Redis
+      const savedValue = await this.redis.get(lobbyId);
+      console.log('✅ Verification - Redis value:', { lobbyId, savedValue, matches: savedValue === creatorId });
 
       return lobby;
     } catch (error) {
