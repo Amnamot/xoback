@@ -59,14 +59,26 @@ export class LobbyService {
 
     for (const key of keys) {
       const value = await this.redis.get(key);
+      if (!value) continue;
+      
       console.log(`🔑 Checking lobby ${key}:`, {
         value,
-        expectedTgId: tgId.toString(),
-        matches: value === tgId.toString()
+        expectedTgId: tgId.toString()
       });
-      if (value === tgId.toString()) {
-        lobbyId = key;
-        break;
+      
+      try {
+        const lobbyData = JSON.parse(value);
+        console.log('📦 Parsed lobby data:', {
+          creatorId: lobbyData.creatorId,
+          matches: lobbyData.creatorId === tgId.toString()
+        });
+        
+        if (lobbyData.creatorId === tgId.toString()) {
+          lobbyId = key;
+          break;
+        }
+      } catch (error) {
+        console.error('❌ Error parsing lobby data:', error);
       }
     }
 
