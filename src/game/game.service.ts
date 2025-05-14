@@ -220,8 +220,8 @@ export class GameService {
         lobby.status = 'pending';
         
         const multi = this.redis.multi();
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 35);
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 35);
+        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 30);
+        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 30);
         
         console.log('💾 Executing Redis transaction for pending status');
         const results = await multi.exec();

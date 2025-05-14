@@ -106,17 +106,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.gameService.restoreLobby(lobby.id);
         client.join(lobby.id);
         
+        // Получаем оставшееся время TTL
+        const ttl = await this.redis.ttl(lobby.id);
+        
         // Отправляем событие о готовности лобби
         this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
           timestamp: Date.now()
         });
 
+        // Отправляем событие для восстановления WaitModal
+        client.emit('uiState', {
+          state: 'waitModal',
+          telegramId,
+          details: {
+            timeLeft: ttl > 0 ? ttl : 30,
+            isReconnect: true
+          }
+        });
+
         console.log('🔄 Restored lobby and sent ready event:', {
           lobbyId: lobby.id,
           creatorId: telegramId,
           rooms: Array.from(client.rooms),
-          status: lobby.status
+          status: lobby.status,
+          ttl
         });
       }
     }
