@@ -21,7 +21,8 @@ import {
   GameOverDto,
   JoinGameDto,
   TimeExpiredDto,
-  CreateInviteDto
+  CreateInviteDto,
+  CancelLobbyDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -568,6 +569,60 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       console.error('❌ Error creating invite:', error);
       return { error: 'Failed to create invite' };
+    }
+  }
+
+  @SubscribeMessage('cancelLobby')
+  @UsePipes(new ValidationPipe())
+  async handleCancelLobby(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: CancelLobbyDto
+  ) {
+    console.log('🔄 Handling cancelLobby request:', {
+      telegramId: data.telegramId,
+      socketId: client.id
+    });
+
+    try {
+      // Находим лобби по создателю
+      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      
+      if (!lobby) {
+        console.warn('⚠️ No active lobby found for creator:', data.telegramId);
+        return {
+          status: 'error',
+          message: 'No active lobby found',
+          timestamp: Date.now()
+        };
+      }
+
+      // Удаляем лобби
+      await this.gameService.deleteLobby(lobby.id);
+      
+      // Очищаем связь клиент-лобби
+      this.clientLobbies.delete(data.telegramId);
+      
+      // Отправляем событие об удалении лобби всем в комнате
+      this.server.to(lobby.id).emit('lobbyDeleted', {
+        reason: 'Cancelled by creator'
+      });
+
+      console.log('✅ Lobby successfully cancelled:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId
+      });
+
+      return {
+        status: 'success',
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('❌ Error in handleCancelLobby:', error);
+      return {
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Failed to cancel lobby',
+        timestamp: Date.now()
+      };
     }
   }
 

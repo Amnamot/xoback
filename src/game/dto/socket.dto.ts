@@ -103,4 +103,9 @@ export class TimeExpiredDto {
 export class CreateInviteDto {
     @IsString()
     telegramId: string;
+}
+
+export class CancelLobbyDto {
+    @IsString()
+    telegramId: string;
 } 
