@@ -106,21 +106,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.gameService.restoreLobby(lobby.id);
         client.join(lobby.id);
         
-        // Получаем оставшееся время TTL
-        const ttl = await this.redis.ttl(lobby.id);
+        // Получаем оставшееся время TTL для pending статуса
+        const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
         
         // Отправляем событие о готовности лобби
         this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          ttl: pendingTTL > 0 ? pendingTTL : 30 // Используем оставшееся время или 30 секунд по умолчанию
         });
 
-        // Отправляем событие для восстановления WaitModal
+        // Отправляем событие для восстановления WaitModal с корректным TTL
         client.emit('uiState', {
           state: 'waitModal',
           telegramId,
           details: {
-            timeLeft: ttl > 0 ? ttl : 30,
+            timeLeft: pendingTTL > 0 ? pendingTTL : 30,
             isReconnect: true
           }
         });
@@ -130,7 +131,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           creatorId: telegramId,
           rooms: Array.from(client.rooms),
           status: lobby.status,
-          ttl
+          pendingTTL
         });
       }
     }

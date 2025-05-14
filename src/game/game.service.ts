@@ -220,8 +220,11 @@ export class GameService {
         lobby.status = 'pending';
         
         const multi = this.redis.multi();
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 30);
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 30);
+        // Основной TTL лобби остается 180 секунд
+        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
+        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 180);
+        // Добавляем отдельный ключ для pending статуса с TTL 30 секунд
+        multi.set(`pending:${lobbyId}`, '1', 'EX', 30);
         
         console.log('💾 Executing Redis transaction for pending status');
         const results = await multi.exec();
@@ -230,11 +233,8 @@ export class GameService {
           console.error('❌ Redis transaction failed:', results);
           throw new Error('Failed to mark lobby as pending');
         }
-
-        this.activeLobbies.set(lobbyId, lobby);
+        
         console.log('✅ Lobby marked as pending:', lobbyId);
-      } else {
-        console.warn('⚠️ Lobby not found in memory:', lobbyId);
       }
     } catch (error) {
       console.error('❌ Error marking lobby as pending:', error);
