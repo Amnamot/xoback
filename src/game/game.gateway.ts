@@ -668,13 +668,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('uiState')
   async handleUiState(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss', telegramId: string, details?: any }
+    @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
   ) {
     const states: Record<string, string> = {
       'loader': '⌛ User on Loader screen',
       'startScreen': '🎮 User on Start screen',
       'waitModal': '⏳ WaitModal is shown',
-      'loss': '❌ User on Loss screen'
+      'loss': '❌ User on Loss screen',
+      'appClosed': '👋 User closed the app'
     };
 
     console.log(`${states[data.state] || '🔄 UI State change'}:`, {
