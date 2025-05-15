@@ -498,75 +498,113 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('makeMove')
-  @UsePipes(new ValidationPipe())
   async handleMove(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: MakeMoveDto
   ) {
-    const session = await this.gameService.getGameSession(data.gameId);
-    
-    if (!session) {
-      return { status: 'error', message: 'Game session not found' };
-    }
+    const startTime = Date.now();
+    const telegramId = client.handshake.query.telegramId as string;
 
-    const currentTime = Date.now();
-    const timeSinceLastMove = currentTime - session.lastMoveTime;
-    const MAX_MOVE_TIME = 30000;
-
-    if (timeSinceLastMove > MAX_MOVE_TIME) {
-      const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-      
-      await this.gameService.endGameSession(data.gameId, winner);
-      
-      this.server.to(data.gameId).emit('gameEnded', {
-        winner,
-        reason: 'timeout',
-        statistics: {
-          totalTime: Math.floor((currentTime - session.startedAt) / 1000),
-          moves: session.numMoves,
-          playerTime1: session.playerTime1,
-          playerTime2: session.playerTime2,
-          lastMoveTime: timeSinceLastMove
-        }
-      });
-
-      this.clientGames.delete(session.creatorId);
-      this.clientGames.delete(session.opponentId);
-
-      return { status: 'error', message: 'Move time expired' };
-    }
-
-    const isCreator = data.player === session.creatorId;
-
-    if (data.player !== session.currentTurn) {
-      return { status: 'error', message: 'Not your turn' };
-    }
-
-    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
-      playerTime1: isCreator ? session.playerTime1 + data.moveTime : session.playerTime1,
-      playerTime2: !isCreator ? session.playerTime2 + data.moveTime : session.playerTime2,
-      lastMoveTime: currentTime,
-      currentTurn: isCreator ? session.opponentId : session.creatorId,
-      numMoves: session.numMoves + 1
-    });
-
-    this.server.to(data.gameId).emit('moveMade', {
-      moveId: `move_${currentTime}`,
+    console.log('🎯 Handling move request', {
+      gameId: data.gameId,
+      telegramId,
       position: data.position,
       player: data.player,
-      gameState: {
-        currentTurn: updatedSession.currentTurn,
-        playerTime1: updatedSession.playerTime1,
-        playerTime2: updatedSession.playerTime2,
-        numMoves: updatedSession.numMoves,
-        serverTime: currentTime,
-        moveStartTime: currentTime,
-        gameStartTime: session.startedAt,
-        timeLeft: MAX_MOVE_TIME
-      }
+      moveTime: data.moveTime,
+      timestamp: new Date().toISOString()
     });
 
-    return { status: 'success' };
+    try {
+      const session = this.gameService.getGameSession(data.gameId);
+      if (!session) {
+        console.error('❌ Game session not found for move', {
+          gameId: data.gameId,
+          telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Проверяем, что это ход нужного игрока
+      if (session.currentTurn !== telegramId) {
+        console.warn('⚠️ Invalid turn attempt', {
+          gameId: data.gameId,
+          expectedPlayer: session.currentTurn,
+          actualPlayer: telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Проверяем время хода
+      const timeSinceLastMove = Date.now() - session.lastMoveTime;
+      if (timeSinceLastMove > 30000) { // 30 секунд
+        console.warn('⚠️ Move time expired', {
+          gameId: data.gameId,
+          telegramId,
+          timeSinceLastMove,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Определяем победителя (противник текущего игрока)
+        const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+        await this.gameService.endGameSession(data.gameId, winner, 'timeout');
+        
+        this.server.to(data.gameId).emit('gameEnded', {
+          winner,
+          reason: 'timeout',
+          statistics: {
+            totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
+            moves: session.numMoves,
+            playerTime1: session.playerTime1,
+            playerTime2: session.playerTime2,
+            lastMoveTime: timeSinceLastMove
+          }
+        });
+        return;
+      }
+
+      // Обновляем состояние игры
+      const nextTurn = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+      const updatedSession = await this.gameService.updateGameSession(data.gameId, {
+        currentTurn: nextTurn,
+        lastMoveTime: Date.now(),
+        numMoves: session.numMoves + 1,
+        playerTime1: session.currentTurn === session.creatorId ? session.playerTime1 + data.moveTime : session.playerTime1,
+        playerTime2: session.currentTurn === session.opponentId ? session.playerTime2 + data.moveTime : session.playerTime2
+      });
+
+      // Отправляем ход всем игрокам
+      this.server.to(data.gameId).emit('moveMade', {
+        position: data.position,
+        player: data.player,
+        gameState: {
+          currentTurn: updatedSession.currentTurn,
+          playerTime1: updatedSession.playerTime1,
+          playerTime2: updatedSession.playerTime2,
+          serverTime: Date.now(),
+          moveStartTime: updatedSession.lastMoveTime,
+          gameStartTime: updatedSession.startedAt
+        },
+        moveId: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
+
+      console.log('✅ Move processed successfully', {
+        gameId: data.gameId,
+        telegramId,
+        nextTurn,
+        processingTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error processing move:', {
+        gameId: data.gameId,
+        telegramId,
+        error: error.stack,
+        processingTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   @SubscribeMessage('updatePlayerTime')
@@ -623,33 +661,82 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('timeExpired')
-  @UsePipes(new ValidationPipe())
   async handleTimeExpired(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: TimeExpiredDto
   ) {
-    const session = await this.gameService.getGameSession(data.gameId);
-    
-    if (!session) {
-      return { status: 'error', message: 'Game session not found' };
-    }
+    const startTime = Date.now();
+    const telegramId = client.handshake.query.telegramId as string;
 
-    const winner = data.player === session.creatorId ? session.opponentId : session.creatorId;
-
-    await this.gameService.endGameSession(data.gameId, winner);
-
-    this.server.to(data.gameId).emit('gameEnded', {
-      winner,
-      reason: 'timeout',
-      statistics: {
-        totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
-        moves: session.numMoves,
-        playerTime1: session.playerTime1,
-        playerTime2: session.playerTime2
-      }
+    console.log('⏰ Handling time expired event', {
+      gameId: data.gameId,
+      telegramId,
+      player: data.player,
+      timestamp: new Date().toISOString()
     });
 
-    return { status: 'success' };
+    try {
+      const session = this.gameService.getGameSession(data.gameId);
+      if (!session) {
+        console.error('❌ Game session not found for time expired event', {
+          gameId: data.gameId,
+          telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Проверяем, что время действительно истекло
+      const timeSinceLastMove = Date.now() - session.lastMoveTime;
+      if (timeSinceLastMove <= 30000) { // 30 секунд
+        console.warn('⚠️ Invalid time expired event - time not actually expired', {
+          gameId: data.gameId,
+          telegramId,
+          timeSinceLastMove,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Определяем победителя (противник текущего игрока)
+      const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+      
+      console.log('🏁 Ending game due to time expiration', {
+        gameId: data.gameId,
+        winner,
+        loser: session.currentTurn,
+        timeSinceLastMove,
+        timestamp: new Date().toISOString()
+      });
+
+      await this.gameService.endGameSession(data.gameId, winner, 'timeout');
+      
+      this.server.to(data.gameId).emit('gameEnded', {
+        winner,
+        reason: 'timeout',
+        statistics: {
+          totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
+          moves: session.numMoves,
+          playerTime1: session.playerTime1,
+          playerTime2: session.playerTime2,
+          lastMoveTime: timeSinceLastMove
+        }
+      });
+
+      console.log('✅ Time expired event handled successfully', {
+        gameId: data.gameId,
+        processingTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error handling time expired event:', {
+        gameId: data.gameId,
+        telegramId,
+        error: error.stack,
+        processingTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 
   @SubscribeMessage('createInvite')
@@ -811,24 +898,63 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('updateViewport')
+  async handleViewportUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: UpdateViewportDto
+  ) {
+    const telegramId = client.handshake.query.telegramId as string;
+
+    console.log('🔄 Handling viewport update', {
+      gameId: data.gameId,
+      telegramId,
+      viewport: data.viewport,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      const session = this.gameService.getGameSession(data.gameId);
+      if (!session) {
+        console.warn('⚠️ Game session not found for viewport update', {
+          gameId: data.gameId,
+          telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      // Отправляем обновление всем игрокам, кроме отправителя
+      client.to(data.gameId).emit('viewportUpdated', {
+        telegramId,
+        viewport: data.viewport
+      });
+
+      console.log('✅ Viewport update broadcasted', {
+        gameId: data.gameId,
+        telegramId,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error updating viewport:', {
+        gameId: data.gameId,
+        telegramId,
+        error: error.stack,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
   @SubscribeMessage('uiState')
   async handleUiState(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
   ) {
-    const states: Record<string, string> = {
-      'loader': '⌛ User on Loader screen',
-      'startScreen': '🎮 User on Start screen',
-      'waitModal': '⏳ WaitModal is shown',
-      'loss': '❌ User on Loss screen',
-      'appClosed': '👋 User closed the app'
-    };
-
-    console.log(`${states[data.state] || '🔄 UI State change'}:`, {
+    console.log('📱 UI state update', {
       telegramId: data.telegramId,
-      socketId: client.id,
       state: data.state,
-      ...(data.details && { details: data.details })
+      details: data.details,
+      socketId: client.id,
+      timestamp: new Date().toISOString()
     });
   }
 

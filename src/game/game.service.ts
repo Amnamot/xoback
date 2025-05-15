@@ -14,18 +14,45 @@ export class GameService {
     private readonly prisma: PrismaService,
     @InjectRedis() private readonly redis: Redis,
   ) {
+    console.log('🎮 Game service initialized', {
+      timestamp: new Date().toISOString(),
+      activeSessions: this.activeSessions.size,
+      activeLobbies: this.activeLobbies.size
+    });
+
     // Запускаем периодическую очистку каждые 5 минут
     setInterval(() => {
+      console.log('🧹 Starting periodic cleanup', {
+        timestamp: new Date().toISOString(),
+        activeSessions: this.activeSessions.size,
+        activeLobbies: this.activeLobbies.size,
+        userLobbyRequests: this.userLobbyRequests.size
+      });
+
       this.cleanupInconsistentData().catch(error => {
-        console.error('Error during cleanup:', error);
+        console.error('❌ Error during cleanup:', {
+          error: error.stack,
+          timestamp: new Date().toISOString()
+        });
       });
     }, 5 * 60 * 1000);
   }
 
   private async checkLobbyLimit(telegramId: string): Promise<boolean> {
+    console.log('🔍 Checking lobby limit', {
+      telegramId,
+      timestamp: new Date().toISOString(),
+      activeLobbies: this.activeLobbies.size
+    });
+
     // Проверяем существующие лобби пользователя в памяти
     for (const [_, lobby] of this.activeLobbies) {
       if (lobby.creatorId === telegramId && lobby.status === 'active') {
+        console.warn('⚠️ User already has active lobby in memory', {
+          telegramId,
+          lobbyId: lobby.id,
+          timestamp: new Date().toISOString()
+        });
         return false;
       }
     }
@@ -34,17 +61,35 @@ export class GameService {
     const existingLobbyId = await this.redis.get(`user_lobby:${telegramId}`);
     
     if (existingLobbyId) {
+      console.log('🔍 Found existing lobby in Redis', {
+        telegramId,
+        lobbyId: existingLobbyId,
+        timestamp: new Date().toISOString()
+      });
+
       const lobbyData = await this.redis.get(existingLobbyId);
       if (lobbyData) {
+        const lobby = JSON.parse(lobbyData);
         this.activeLobbies.set(existingLobbyId, {
           id: existingLobbyId,
           creatorId: telegramId,
           createdAt: Date.now(),
           status: 'active'
         });
+        console.log('📝 Restored lobby from Redis to memory', {
+          telegramId,
+          lobbyId: existingLobbyId,
+          lobbyData: lobby,
+          timestamp: new Date().toISOString()
+        });
         return false;
       }
       // Если лобби не найдено, но индекс есть - очищаем индекс
+      console.warn('⚠️ Lobby index exists but lobby not found, cleaning up', {
+        telegramId,
+        lobbyId: existingLobbyId,
+        timestamp: new Date().toISOString()
+      });
       await this.redis.del(`user_lobby:${telegramId}`);
     }
     
@@ -332,14 +377,37 @@ export class GameService {
   }
 
   async updateGameSession(gameId: string, updates: Partial<GameSession>): Promise<GameSession> {
+    console.log('🔄 Updating game session', {
+      gameId,
+      updates,
+      timestamp: new Date().toISOString()
+    });
+
     const session = this.activeSessions.get(gameId);
     if (!session) {
+      console.error('❌ Game session not found for update', {
+        gameId,
+        timestamp: new Date().toISOString()
+      });
       throw new Error('Game session not found');
     }
 
-    Object.assign(session, updates);
-    this.activeSessions.set(gameId, session);
-    return session;
+    const updatedSession = { ...session, ...updates };
+    this.activeSessions.set(gameId, updatedSession);
+
+    console.log('✅ Game session updated', {
+      gameId,
+      session: {
+        creatorId: updatedSession.creatorId,
+        opponentId: updatedSession.opponentId,
+        currentTurn: updatedSession.currentTurn,
+        numMoves: updatedSession.numMoves,
+        lastMoveTime: new Date(updatedSession.lastMoveTime).toISOString()
+      },
+      timestamp: new Date().toISOString()
+    });
+
+    return updatedSession;
   }
 
   async getGameResult(gameId: string): Promise<{ 
@@ -379,56 +447,126 @@ export class GameService {
   }
 
   async endGameSession(gameId: string, winnerId: string, reason: string = 'unknown'): Promise<void> {
-    const session = this.activeSessions.get(gameId);
-    if (!session) {
-      throw new Error('Game session not found');
-    }
-
-    // Создаем запись в БД
-    const game = await this.prisma.game.create({
-      data: {
-        createdBy: session.creatorId,
-        rival: session.opponentId,
-        winner: winnerId,
-        reason: reason,
-        pay: session.pay,
-        numMoves: session.numMoves,
-        time: Math.floor((Date.now() - session.startedAt) / 1000),
-        playertime1: Math.floor(session.playerTime1 / 1000),
-        playertime2: Math.floor(session.playerTime2 / 1000),
-        created: new Date(session.startedAt),
-        finished: new Date()
-      }
+    console.log('🏁 Ending game session', {
+      gameId,
+      winnerId,
+      reason,
+      timestamp: new Date().toISOString()
     });
 
-    // Удаляем сессию
-    this.activeSessions.delete(gameId);
+    const session = this.activeSessions.get(gameId);
+    if (!session) {
+      console.error('❌ Game session not found for ending', {
+        gameId,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    try {
+      // Сохраняем результат в БД
+      const gameResult = await this.prisma.game.create({
+        data: {
+          createdBy: session.creatorId,
+          rival: session.opponentId,
+          winner: winnerId,
+          reason: reason,
+          pay: session.pay || false,
+          numMoves: session.numMoves,
+          time: Math.floor((Date.now() - session.startedAt) / 1000),
+          playertime1: Math.floor(session.playerTime1 / 1000),
+          playertime2: Math.floor(session.playerTime2 / 1000),
+          created: new Date(session.startedAt),
+          finished: new Date()
+        }
+      });
+
+      console.log('💾 Game result saved to database', {
+        gameId,
+        result: {
+          winner: gameResult.winner,
+          reason: gameResult.reason,
+          time: gameResult.time,
+          numMoves: gameResult.numMoves
+        },
+        timestamp: new Date().toISOString()
+      });
+
+      // Очищаем сессию из памяти
+      this.activeSessions.delete(gameId);
+      
+      console.log('🧹 Game session cleaned up', {
+        gameId,
+        activeSessions: this.activeSessions.size,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error ending game session:', {
+        gameId,
+        error: error.stack,
+        timestamp: new Date().toISOString()
+      });
+      throw error;
+    }
   }
 
   // Добавляем метод для периодической проверки консистентности данных
   private async cleanupInconsistentData(): Promise<void> {
-    const lobbies = Array.from(this.activeLobbies.values());
-    
-    for (const lobby of lobbies) {
-      const [lobbyExists, indexExists] = await Promise.all([
-        this.redis.exists(lobby.id),
-        this.redis.exists(`user_lobby:${lobby.creatorId}`)
-      ]);
-      
-      if (!lobbyExists || !indexExists) {
-        // Очищаем неконсистентные данные
-        await this.deleteLobby(lobby.id);
-        // Rate limit данные будут очищены в методе deleteLobby
+    const startTime = Date.now();
+    console.log('🧹 Starting inconsistent data cleanup', {
+      timestamp: new Date().toISOString(),
+      activeSessions: this.activeSessions.size,
+      activeLobbies: this.activeLobbies.size
+    });
+
+    try {
+      // Очищаем старые rate limit записи
+      const now = Date.now();
+      for (const [telegramId, data] of this.userLobbyRequests) {
+        if (now - data.timestamp > 60000) {
+          this.userLobbyRequests.delete(telegramId);
+        }
       }
-    }
-    
-    // Очищаем устаревшие rate limit данные
-    const now = Date.now();
-    for (const [telegramId, request] of this.userLobbyRequests.entries()) {
-      if (now - request.timestamp > 60000) { // Прошла минута
-        this.userLobbyRequests.delete(telegramId);
-        console.log('🧹 Cleaned up expired rate limit data for:', telegramId);
+
+      // Проверяем все активные лобби
+      for (const [lobbyId, lobby] of this.activeLobbies) {
+        const exists = await this.redis.exists(lobbyId);
+        if (!exists) {
+          this.activeLobbies.delete(lobbyId);
+          console.log('🗑️ Removed inconsistent lobby', {
+            lobbyId,
+            creatorId: lobby.creatorId,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
+
+      // Проверяем все активные сессии
+      for (const [gameId, session] of this.activeSessions) {
+        const timeSinceLastMove = Date.now() - session.lastMoveTime;
+        if (timeSinceLastMove > 24 * 60 * 60 * 1000) { // 24 часа
+          this.activeSessions.delete(gameId);
+          console.log('🗑️ Removed stale game session', {
+            gameId,
+            timeSinceLastMove: Math.floor(timeSinceLastMove / 1000),
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      console.log('✅ Cleanup completed', {
+        duration: Date.now() - startTime,
+        remainingSessions: this.activeSessions.size,
+        remainingLobbies: this.activeLobbies.size,
+        remainingRateLimits: this.userLobbyRequests.size,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error during cleanup:', {
+        error: error.stack,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 
