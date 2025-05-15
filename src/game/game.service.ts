@@ -33,6 +33,9 @@ export class GameService {
       activeLobbies: this.activeLobbies.size
     });
 
+    // Запускаем очистку при старте сервиса
+    this.cleanupInvalidLobbies();
+    
     // Запускаем периодическую очистку каждые 5 минут
     setInterval(() => {
       console.log('🧹 Starting periodic cleanup', {
@@ -1059,6 +1062,60 @@ export class GameService {
     } catch (error) {
       console.error('❌ Error acquiring cleanup lock:', error);
       return false;
+    }
+  }
+
+  // Очистка некорректных лобби
+  private async cleanupInvalidLobbies(): Promise<void> {
+    console.log('🧹 Starting cleanup of invalid lobbies');
+    
+    try {
+      // Получаем все активные лобби
+      const lobbies = Array.from(this.activeLobbies.values());
+      
+      for (const lobby of lobbies) {
+        if (!lobby.creatorId || lobby.creatorId === 'undefined') {
+          console.log('🗑️ Removing invalid lobby:', {
+            lobbyId: lobby.id,
+            creatorId: lobby.creatorId,
+            timestamp: new Date().toISOString()
+          });
+          
+          await this.deleteLobby(lobby.id);
+        }
+      }
+      
+      // Очищаем индексы в Redis
+      const keys = await this.redis.keys('lobby_*');
+      for (const key of keys) {
+        const lobbyData = await this.redis.get(key);
+        if (lobbyData) {
+          try {
+            const lobby = JSON.parse(lobbyData);
+            if (!lobby.creatorId || lobby.creatorId === 'undefined') {
+              console.log('🗑️ Removing invalid Redis lobby:', {
+                lobbyId: key,
+                creatorId: lobby.creatorId,
+                timestamp: new Date().toISOString()
+              });
+              await this.deleteLobby(key);
+            }
+          } catch (error) {
+            console.error('❌ Error parsing lobby data during cleanup:', {
+              error: error.message,
+              lobbyId: key,
+              timestamp: new Date().toISOString()
+            });
+          }
+        }
+      }
+      
+      console.log('✅ Invalid lobbies cleanup completed');
+    } catch (error) {
+      console.error('❌ Error during invalid lobbies cleanup:', {
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 } 

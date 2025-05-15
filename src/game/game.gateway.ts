@@ -79,7 +79,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: SocketWithAuth) {
     try {
-      const telegramId = client.telegramId;
+      const telegramId = client.handshake.query.telegramId as string;
+      
+      // Проверяем наличие telegramId
+      if (!telegramId) {
+        this.logger.error({
+          event: 'connectionError',
+          error: 'No telegramId provided',
+          clientId: client.id,
+          timestamp: new Date().toISOString()
+        });
+        client.disconnect();
+        return;
+      }
+
+      // Устанавливаем telegramId в объект клиента
+      client.telegramId = telegramId;
       
       this.logger.log({
         event: 'clientConnected',
@@ -134,6 +149,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         clientId: client.id,
         timestamp: new Date().toISOString()
       });
+      client.disconnect();
     }
   }
 
@@ -276,19 +292,43 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: CreateLobbyDto
   ) {
     try {
+      // Проверяем telegramId из запроса и сокета
+      const telegramId = data.telegramId || client.telegramId;
+      
+      if (!telegramId) {
+        throw new Error('TelegramId not provided');
+      }
+
       this.logger.log({
         event: 'createLobbyStarted',
         clientId: client.id,
-        telegramId: client.telegramId,
+        telegramId,
         timestamp: new Date().toISOString()
       });
 
-      const lobby = await this.gameService.createLobby(client.telegramId);
+      // Проверяем существующие лобби для этого пользователя
+      const existingLobby = await this.gameService.findLobbyByCreator(telegramId);
+      if (existingLobby) {
+        this.logger.warn({
+          event: 'duplicateLobbyAttempt',
+          clientId: client.id,
+          telegramId,
+          existingLobbyId: existingLobby.id,
+          timestamp: new Date().toISOString()
+        });
+        return { 
+          status: 'error',
+          message: 'You already have an active lobby',
+          timestamp: Date.now()
+        };
+      }
+
+      const lobby = await this.gameService.createLobby(telegramId);
       if (!lobby) {
         throw new Error('Failed to create lobby');
       }
 
-      this.clientLobbies.set(client.telegramId, lobby.id);
+      this.clientLobbies.set(telegramId, lobby.id);
       client.join(lobby.id);
 
       this.server.to(lobby.id).emit('lobbyReady', { 
@@ -307,11 +347,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         error: error.message,
         stack: error.stack,
         clientId: client.id,
-        telegramId: client.telegramId,
+        telegramId: data.telegramId,
         timestamp: new Date().toISOString()
       });
 
-      this.clientLobbies.delete(client.telegramId);
+      this.clientLobbies.delete(data.telegramId);
       return { 
         status: 'error',
         message: error.message,
