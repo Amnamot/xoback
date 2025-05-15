@@ -36,7 +36,8 @@ import { Redis } from 'ioredis';
 @WebSocketGateway({
   namespace: '/game',
   cors: {
-    origin: '*',
+    origin: process.env.CORS_ORIGIN?.split(','),
+    credentials: true
   }
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
