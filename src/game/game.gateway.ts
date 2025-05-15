@@ -858,22 +858,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const result = {
         type: "article",
         id: randomBytes(5).toString("hex"),
-        title: "Invitation to the game!",
-        description: "Click to accept the call!",
+        title: "Invitation to the game! ⚔️",
+        description: "Click to accept the challenge!",
         input_message_content: {
-          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe`,
+          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe!`,
+          parse_mode: "HTML"
         },
         reply_markup: {
-          inline_keyboard: [[
-            {
-              text: "⚔️ Accept the battle 🛡",
-              url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
-            }
-          ]]
+          inline_keyboard: [[{
+            text: "⚔️ Accept the battle 🛡",
+            url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+          }]]
         },
-        thumbnail_url: "https://brown-real-meerkat-526.mypinata.cloud/ipfs/bafkreihszmccida3akvw4oshrwcixy5xnpimxiprjrnqo5aevzshj4foda",
+        thumbnail_url: "https://igra.top/media/inviteImg.png",
         thumbnail_width: 300,
-        thumbnail_height: 300,
+        thumbnail_height: 300
       };
 
       console.log('📤 Preparing Telegram API request:', {
@@ -883,8 +882,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Отправляем сообщение через Telegram Bot API
       const BOT_TOKEN = this.configService.get("BOT_TOKEN");
-      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
-      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/saveInlineMessage`;
+      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}`;
       
       console.log('🔗 Telegram API URL (without token):', url.replace(BOT_TOKEN, 'BOT_TOKEN'));
 
