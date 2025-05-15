@@ -137,4 +137,26 @@ export class LobbyService {
       return 180;
     }
   }
+
+  async findLobbyByCreator(telegramId: string) {
+    const keys = await this.redis.keys('lobby_*');
+    
+    for (const key of keys) {
+      const value = await this.redis.get(key);
+      if (!value) continue;
+      
+      try {
+        if (value === telegramId.toString()) {
+          return {
+            id: key,
+            status: 'active'
+          };
+        }
+      } catch (error) {
+        console.error('Error checking lobby:', error);
+      }
+    }
+    
+    return null;
+  }
 }
