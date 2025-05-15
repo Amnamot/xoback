@@ -127,4 +127,14 @@ export class LobbyService {
     }
     return { ttl: 0 };
   }
+
+  async getLobbyTTL(lobbyId: string): Promise<number> {
+    try {
+      const ttl = await this.redis.ttl(lobbyId);
+      return ttl > 0 ? ttl : 180;
+    } catch (error) {
+      console.error('Error getting lobby TTL:', error);
+      return 180;
+    }
+  }
 }

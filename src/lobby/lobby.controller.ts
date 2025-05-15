@@ -6,7 +6,8 @@ import {
   UseGuards,
   Delete,
   Body,
-  Get
+  Get,
+  Param
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
 import { Request } from 'express';
@@ -43,5 +44,26 @@ export class LobbyController {
   @Delete('cancel')
   cancelLobbyPublic(@Body() body: { lobbyId: string; telegramId: string }) {
     return this.lobbyService.cancelLobbyPublic(body.lobbyId, body.telegramId);
+  }
+
+  @Get('check/:telegramId')
+  async checkActiveLobby(@Param('telegramId') telegramId: string) {
+    try {
+      const lobby = await this.lobbyService.findLobbyByCreator(telegramId);
+      
+      if (lobby) {
+        const ttl = await this.lobbyService.getLobbyTTL(lobby.id);
+        return {
+          lobbyId: lobby.id,
+          ttl: ttl > 0 ? ttl : 180,
+          status: lobby.status
+        };
+      }
+      
+      return { lobbyId: null };
+    } catch (error) {
+      console.error('Error checking active lobby:', error);
+      return { error: 'Failed to check active lobby' };
+    }
   }
 }
