@@ -128,6 +128,19 @@ export class UserService {
         return updatedUser;
       }
 
+      // Генерируем уникальный xoId
+      let xoId: string;
+      while (true) {
+        const candidate = this.generateXoId();
+        const existing = await this.prisma.user.findUnique({
+          where: { xoId: candidate },
+        });
+        if (!existing) {
+          xoId = candidate;
+          break;
+        }
+      }
+
       // Создаем нового пользователя
       const newUser = await this.prisma.user.create({
         data: {
@@ -135,6 +148,7 @@ export class UserService {
           userName: initData.username || '',
           firstName: initData.first_name || '',
           lastName: initData.last_name || '',
+          xoId: xoId,
           numGames: 0,
           numWins: 0,
           stars: 0,
@@ -146,6 +160,7 @@ export class UserService {
         event: 'newUserCreated',
         telegramId: initData.id,
         userId: newUser.id,
+        xoId: xoId,
         timestamp: new Date().toISOString()
       });
 
