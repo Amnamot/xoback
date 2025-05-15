@@ -1,8 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
-import { GameSession, Lobby } from './types';
+import { 
+  GameSession, 
+  Lobby, 
+  LobbyStatus, 
+  VALID_STATUS_TRANSITIONS, 
+  LOBBY_TTL,
+  PENDING_TTL,
+  WAIT_TTL,
+  REDIS_KEYS,
+  TRANSITION_LIMITS,
+  StatusTransitionLimit,
+  CleanupMetrics,
+  TransitionError
+} from './types';
 
 @Injectable()
 export class GameService {
@@ -45,44 +58,24 @@ export class GameService {
       activeLobbies: this.activeLobbies.size
     });
 
-    // Проверяем существующие лобби пользователя в памяти
-    for (const [_, lobby] of this.activeLobbies) {
-      if (lobby.creatorId === telegramId && lobby.status === 'active') {
-        console.warn('⚠️ User already has active lobby in memory', {
-          telegramId,
-          lobbyId: lobby.id,
-          timestamp: new Date().toISOString()
-        });
-        return false;
-      }
-    }
-
-    // Проверяем существующие лобби в Redis через индекс
-    const existingLobbyId = await this.redis.get(`user_lobby:${telegramId}`);
-    
+    // Проверяем существующие лобби через индекс
+    const existingLobbyId = await this.redis.get(REDIS_KEYS.USER_LOBBY(telegramId));
     if (existingLobbyId) {
-      console.log('🔍 Found existing lobby in Redis', {
-        telegramId,
-        lobbyId: existingLobbyId,
-        timestamp: new Date().toISOString()
-      });
-
-      const lobbyData = await this.redis.get(existingLobbyId);
+      const lobbyData = await this.redis.get(REDIS_KEYS.LOBBY(existingLobbyId));
       if (lobbyData) {
-        const lobby = JSON.parse(lobbyData);
-        this.activeLobbies.set(existingLobbyId, {
-          id: existingLobbyId,
-          creatorId: telegramId,
-          createdAt: Date.now(),
-          status: 'active'
-        });
-        console.log('📝 Restored lobby from Redis to memory', {
-          telegramId,
-          lobbyId: existingLobbyId,
-          lobbyData: lobby,
-          timestamp: new Date().toISOString()
-        });
-        return false;
+        try {
+          const lobby = JSON.parse(lobbyData);
+          this.activeLobbies.set(existingLobbyId, lobby);
+          console.log('📝 Restored lobby from Redis to memory', {
+            telegramId,
+            lobbyId: existingLobbyId,
+            lobbyData: lobby,
+            timestamp: new Date().toISOString()
+          });
+          return false;
+        } catch (error) {
+          console.error('❌ Error parsing lobby data:', error);
+        }
       }
       // Если лобби не найдено, но индекс есть - очищаем индекс
       console.warn('⚠️ Lobby index exists but lobby not found, cleaning up', {
@@ -90,7 +83,7 @@ export class GameService {
         lobbyId: existingLobbyId,
         timestamp: new Date().toISOString()
       });
-      await this.redis.del(`user_lobby:${telegramId}`);
+      await this.redis.del(REDIS_KEYS.USER_LOBBY(telegramId));
     }
     
     return true;
@@ -138,116 +131,258 @@ export class GameService {
     }
   }
 
-  async createLobby(creatorId: string): Promise<Lobby | null> {
-    console.log('🎯 Starting lobby creation for creator:', creatorId);
+  private async validateLobbyState(
+    lobbyId: string,
+    newStatus: LobbyStatus,
+    telegramId: string
+  ): Promise<boolean> {
+    const lobby = await this.getLobby(lobbyId);
+    if (!lobby) {
+      console.warn('❌ Lobby not found:', lobbyId);
+      throw new Error(TransitionError.NOT_FOUND);
+    }
     
+    // Проверка прав доступа
+    if (lobby.creatorId !== telegramId) {
+      console.warn('❌ Unauthorized status transition attempt:', {
+        lobbyId,
+        attemptedBy: telegramId,
+        ownedBy: lobby.creatorId
+      });
+      throw new Error(TransitionError.UNAUTHORIZED);
+    }
+    
+    // Проверка лимита переходов
+    if (!await this.checkTransitionLimit(lobbyId)) {
+      throw new Error(TransitionError.RATE_LIMIT);
+    }
+    
+    // Проверка допустимости перехода
+    if (!VALID_STATUS_TRANSITIONS[lobby.status].includes(newStatus)) {
+      console.warn('❌ Invalid status transition:', {
+        lobbyId,
+        currentStatus: lobby.status,
+        newStatus,
+        allowedTransitions: VALID_STATUS_TRANSITIONS[lobby.status]
+      });
+      throw new Error(TransitionError.INVALID_TRANSITION);
+    }
+    
+    // Проверка наличия оппонента для wait статуса
+    if (newStatus === 'wait' && !lobby.opponentId) {
+      console.warn('❌ Cannot transition to wait status without opponent:', {
+        lobbyId,
+        currentStatus: lobby.status,
+        opponentId: lobby.opponentId
+      });
+      throw new Error(TransitionError.MISSING_OPPONENT);
+    }
+    
+    return true;
+  }
+
+  private async indexLobby(lobby: Lobby): Promise<void> {
+    console.log('📑 Indexing lobby:', {
+      lobbyId: lobby.id,
+      status: lobby.status,
+      creatorId: lobby.creatorId,
+      opponentId: lobby.opponentId
+    });
+
+    const multi = this.redis.multi();
+    
+    // Основной индекс активных лобби
+    multi.sadd(REDIS_KEYS.ACTIVE_LOBBIES, lobby.id);
+    
+    // Индекс по статусу
+    multi.sadd(REDIS_KEYS.LOBBIES_BY_STATUS(lobby.status), lobby.id);
+    
+    // Индекс по пользователю
+    multi.set(REDIS_KEYS.USER_LOBBY(lobby.creatorId), lobby.id, 'EX', LOBBY_TTL);
+    
+    if (lobby.opponentId) {
+      multi.set(REDIS_KEYS.USER_LOBBY(lobby.opponentId), lobby.id, 'EX', LOBBY_TTL);
+    }
+    
+    const results = await multi.exec();
+    if (!results || results.some(result => !result[1])) {
+      console.error('❌ Failed to index lobby:', {
+        lobbyId: lobby.id,
+        results
+      });
+      throw new Error('Failed to index lobby');
+    }
+  }
+
+  private async cleanupLobbyIndices(lobby: Lobby): Promise<void> {
+    console.log('🧹 Cleaning up lobby indices:', {
+      lobbyId: lobby.id,
+      status: lobby.status,
+      creatorId: lobby.creatorId,
+      opponentId: lobby.opponentId
+    });
+
+    const multi = this.redis.multi();
+    
+    // Удаляем из всех индексов
+    multi.srem(REDIS_KEYS.ACTIVE_LOBBIES, lobby.id);
+    multi.srem(REDIS_KEYS.LOBBIES_BY_STATUS(lobby.status), lobby.id);
+    multi.del(REDIS_KEYS.USER_LOBBY(lobby.creatorId));
+    
+    if (lobby.opponentId) {
+      multi.del(REDIS_KEYS.USER_LOBBY(lobby.opponentId));
+    }
+    
+    const results = await multi.exec();
+    if (!results || results.some(result => !result[1])) {
+      console.warn('⚠️ Some lobby indices cleanup failed:', {
+        lobbyId: lobby.id,
+        results
+      });
+    }
+  }
+
+  async updateLobbyTTL(lobbyId: string): Promise<void> {
+    console.log('⏰ Updating lobby TTL:', { lobbyId });
+    
+    const lobby = await this.getLobby(lobbyId);
+    if (!lobby) {
+      console.warn('❌ Cannot update TTL for non-existent lobby:', { lobbyId });
+      return;
+    }
+
+    const multi = this.redis.multi();
+    
+    // Обновляем TTL для основных данных
+    multi.expire(REDIS_KEYS.LOBBY(lobbyId), LOBBY_TTL);
+    multi.expire(REDIS_KEYS.USER_LOBBY(lobby.creatorId), LOBBY_TTL);
+    
+    // Обновляем TTL для статусов
+    if (lobby.status === 'pending') {
+      multi.expire(REDIS_KEYS.PENDING(lobbyId), PENDING_TTL);
+    }
+    if (lobby.status === 'wait') {
+      multi.expire(REDIS_KEYS.WAIT(lobbyId), WAIT_TTL);
+    }
+    
+    // Обновляем TTL для оппонента
+    if (lobby.opponentId) {
+      multi.expire(REDIS_KEYS.OPPONENT(lobbyId), LOBBY_TTL);
+      multi.expire(REDIS_KEYS.USER_LOBBY(lobby.opponentId), LOBBY_TTL);
+    }
+    
+    const results = await multi.exec();
+    if (!results || results.some(result => !result[1])) {
+      console.warn('⚠️ Some TTL updates failed:', {
+        lobbyId,
+        results
+      });
+    }
+  }
+
+  async createLobby(creatorId: string): Promise<Lobby | null> {
+    console.log('🎮 Creating new lobby for:', creatorId);
+
     try {
-      // Проверяем rate limit
-      const withinRateLimit = await this.checkRateLimit(creatorId);
-      if (!withinRateLimit) {
-        console.warn('⚠️ Rate limit exceeded for creator:', creatorId);
-        throw new Error('Please wait before creating another lobby');
-      }
-
-      // Пытаемся атомарно создать блокировку
-      console.log('🔒 Attempting to acquire lock for creator:', creatorId);
-      const lockResult = await this.redis.set(
-        `user_lobby:${creatorId}`,
-        'pending',
-        'EX',
-        180,
-        'NX'
-      );
-
-      if (!lockResult) {
-        console.warn('⚠️ Creator already has an active lobby:', creatorId);
-        
-        // Проверяем существующее лобби
-        const existingLobbyId = await this.redis.get(`user_lobby:${creatorId}`);
-        console.log('🔍 Found existing lobby:', existingLobbyId);
-        
-        if (existingLobbyId && existingLobbyId !== 'pending') {
-          const lobbyData = await this.redis.get(existingLobbyId);
-          if (lobbyData) {
-            console.warn('⚠️ Active lobby exists:', { lobbyId: existingLobbyId, data: lobbyData });
-          }
-        }
-        
-        throw new Error('You already have an active lobby');
-      }
-
-      console.log('✅ Lock acquired for creator:', creatorId);
-
-      try {
-        const lobbyId = `lobby_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        console.log('📝 Generating new lobby:', lobbyId);
-
-        const lobby: Lobby = {
-          id: lobbyId,
+      // Проверяем существующие лобби через индекс
+      const existingLobbyId = await this.redis.get(REDIS_KEYS.USER_LOBBY(creatorId));
+      if (existingLobbyId) {
+        console.warn('⚠️ User already has active lobby:', {
           creatorId,
-          createdAt: Date.now(),
-          status: 'active'
-        };
-
-        // Создаем лобби атомарно
-        const multi = this.redis.multi();
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
-        multi.set(`user_lobby:${creatorId}`, lobbyId, 'EX', 180);
-        
-        console.log('💾 Executing Redis transaction for lobby creation');
-        const results = await multi.exec();
-        
-        if (!results || results.some(result => !result[1])) {
-          console.error('❌ Redis transaction failed:', results);
-          throw new Error('Failed to create lobby: Redis transaction error');
-        }
-
-        console.log('✅ Lobby successfully created in Redis:', { lobbyId, creatorId });
-        
-        // Сохраняем в памяти
-        this.activeLobbies.set(lobbyId, lobby);
-        console.log('📦 Lobby saved in memory');
-
-        // Верификация
-        const [storedLobby, storedIndex] = await Promise.all([
-          this.redis.get(lobbyId),
-          this.redis.get(`user_lobby:${creatorId}`)
-        ]);
-        
-        console.log('🔍 Verification:', {
-          lobbyExists: !!storedLobby,
-          indexExists: !!storedIndex,
-          indexMatches: storedIndex === lobbyId
+          existingLobbyId
         });
-
-        return lobby;
-      } catch (error) {
-        // При ошибке удаляем временную блокировку
-        console.error('❌ Error during lobby creation:', error);
-        await this.redis.del(`user_lobby:${creatorId}`);
-        console.log('🧹 Cleaned up temporary lock for creator:', creatorId);
-        throw error;
+        return null;
       }
+
+      const lobbyId = `lobby_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const lobby: Lobby = {
+        id: lobbyId,
+        creatorId,
+        createdAt: Date.now(),
+        status: 'active'
+      };
+
+      // Используем WATCH для атомарных операций
+      const result = await this.redis
+        .multi()
+        .watch(REDIS_KEYS.LOBBY(lobbyId), REDIS_KEYS.USER_LOBBY(creatorId))
+        .set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify(lobby), 'EX', LOBBY_TTL)
+        .set(REDIS_KEYS.USER_LOBBY(creatorId), lobbyId, 'EX', LOBBY_TTL)
+        .exec();
+
+      if (!result || result.some(r => !r[1])) {
+        console.error('❌ Failed to create lobby:', {
+          lobbyId,
+          creatorId,
+          result
+        });
+        return null;
+      }
+
+      // Индексируем лобби
+      await this.indexLobby(lobby);
+
+      // Сохраняем в памяти
+      this.activeLobbies.set(lobbyId, lobby);
+
+      console.log('✅ Lobby created successfully:', {
+        lobbyId,
+        creatorId
+      });
+
+      return lobby;
     } catch (error) {
-      console.error('❌ Lobby creation failed:', error);
-      throw error;
+      console.error('❌ Error creating lobby:', error);
+      return null;
     }
   }
 
   async getLobby(lobbyId: string): Promise<Lobby | null> {
     try {
-      const lobby = this.activeLobbies.get(lobbyId);
-      if (!lobby) {
-        // Пробуем получить из Redis
-        const redisLobby = await this.redis.get(lobbyId);
-        if (redisLobby) {
-          const lobby = JSON.parse(redisLobby) as Lobby;
-          this.activeLobbies.set(lobbyId, lobby);
-          return lobby;
-        }
+      // Сначала проверяем в памяти
+      const memoryLobby = this.activeLobbies.get(lobbyId);
+      if (memoryLobby) {
+        return memoryLobby;
+      }
+
+      // Если нет в памяти, пробуем получить из Redis
+      const lobbyData = await this.redis.get(REDIS_KEYS.LOBBY(lobbyId));
+      if (!lobbyData) {
         return null;
       }
-      return lobby;
+
+      try {
+        const lobby: Lobby = JSON.parse(lobbyData);
+        
+        // Проверяем TTL
+        const ttl = await this.redis.ttl(REDIS_KEYS.LOBBY(lobbyId));
+        if (ttl <= 0) {
+          await this.deleteLobby(lobbyId);
+          return null;
+        }
+
+        // Проверяем статус и связанные данные
+        if (lobby.status === 'pending') {
+          const hasPending = await this.redis.exists(REDIS_KEYS.PENDING(lobbyId));
+          if (!hasPending) {
+            await this.deleteLobby(lobbyId);
+            return null;
+          }
+        } else if (lobby.status === 'wait') {
+          const hasWait = await this.redis.exists(REDIS_KEYS.WAIT(lobbyId));
+          if (!hasWait) {
+            await this.deleteLobby(lobbyId);
+            return null;
+          }
+        }
+
+        // Сохраняем в память и возвращаем
+        this.activeLobbies.set(lobbyId, lobby);
+        return lobby;
+      } catch (error) {
+        console.error('❌ Error parsing lobby data:', error);
+        return null;
+      }
     } catch (error) {
       console.error('Error getting lobby:', error);
       return null;
@@ -255,90 +390,124 @@ export class GameService {
   }
 
   async markLobbyPending(lobbyId: string): Promise<void> {
-    console.log('⏳ Marking lobby as pending:', lobbyId);
+    console.log('⏳ Marking lobby as pending/wait:', lobbyId);
     
     try {
-      const lobby = this.activeLobbies.get(lobbyId);
+      const lobby = await this.getLobby(lobbyId);
       if (lobby) {
-        console.log('📝 Found lobby in memory:', { lobbyId, creatorId: lobby.creatorId });
+        // Определяем статус на основе наличия оппонента
+        const newStatus = lobby.opponentId ? 'wait' : 'pending';
         
-        lobby.status = 'pending';
+        // Проверяем валидность перехода
+        if (!await this.validateLobbyState(lobbyId, newStatus, lobby.creatorId)) {
+          throw new Error(`Invalid status transition from ${lobby.status} to ${newStatus}`);
+        }
+
+        lobby.status = newStatus;
         
         const multi = this.redis.multi();
-        // Основной TTL лобби остается 180 секунд
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 180);
-        // Добавляем отдельный ключ для pending статуса с TTL 30 секунд
-        multi.set(`pending:${lobbyId}`, '1', 'EX', 30);
         
-        console.log('💾 Executing Redis transaction for pending status');
+        // Основной TTL лобби
+        multi.set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify(lobby), 'EX', LOBBY_TTL);
+        multi.set(REDIS_KEYS.USER_LOBBY(lobby.creatorId), lobbyId, 'EX', LOBBY_TTL);
+
+        if (newStatus === 'wait' && lobby.opponentId) {
+          multi.set(REDIS_KEYS.OPPONENT(lobbyId), lobby.opponentId, 'EX', LOBBY_TTL);
+          multi.set(REDIS_KEYS.WAIT(lobbyId), '1', 'EX', WAIT_TTL);
+        } else {
+          multi.set(REDIS_KEYS.PENDING(lobbyId), '1', 'EX', PENDING_TTL);
+        }
+        
         const results = await multi.exec();
         
         if (!results || results.some(result => !result[1])) {
           console.error('❌ Redis transaction failed:', results);
-          throw new Error('Failed to mark lobby as pending');
+          throw new Error('Failed to mark lobby as pending/wait');
         }
         
-        console.log('✅ Lobby marked as pending:', lobbyId);
+        // Обновляем индексы
+        await this.indexLobby(lobby);
+        
+        console.log('✅ Lobby marked as ' + newStatus + ':', lobbyId);
       }
     } catch (error) {
-      console.error('❌ Error marking lobby as pending:', error);
+      console.error('❌ Error marking lobby as pending/wait:', error);
       throw error;
     }
   }
 
   async restoreLobby(lobbyId: string): Promise<void> {
     try {
-      const lobby = this.activeLobbies.get(lobbyId);
+      const lobby = await this.getLobby(lobbyId);
       if (lobby) {
+        // Проверяем валидность перехода
+        if (!await this.validateLobbyState(lobbyId, 'active', lobby.creatorId)) {
+          throw new Error(`Invalid status transition from ${lobby.status} to active`);
+        }
+
         lobby.status = 'active';
         
         const multi = this.redis.multi();
-        // Восстанавливаем TTL в Redis до исходного значения
-        multi.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
-        // Восстанавливаем TTL индекса
-        multi.set(`user_lobby:${lobby.creatorId}`, lobbyId, 'EX', 180);
-        await multi.exec();
+        
+        // Восстанавливаем TTL в Redis
+        multi.set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify(lobby), 'EX', LOBBY_TTL);
+        multi.set(REDIS_KEYS.USER_LOBBY(lobby.creatorId), lobbyId, 'EX', LOBBY_TTL);
+        
+        if (lobby.opponentId) {
+          multi.set(REDIS_KEYS.OPPONENT(lobbyId), lobby.opponentId, 'EX', LOBBY_TTL);
+        }
+        
+        const results = await multi.exec();
+        if (!results || results.some(result => !result[1])) {
+          throw new Error('Failed to restore lobby');
+        }
+        
+        // Обновляем индексы
+        await this.indexLobby(lobby);
         
         this.activeLobbies.set(lobbyId, lobby);
       }
     } catch (error) {
       console.error('Error restoring lobby:', error);
+      throw error;
     }
   }
 
   async deleteLobby(lobbyId: string): Promise<void> {
-    console.log('🗑️ Starting lobby deletion:', lobbyId);
-    
-    try {
-      const lobby = this.activeLobbies.get(lobbyId);
-      if (lobby) {
-        console.log('📝 Found lobby in memory:', { lobbyId, creatorId: lobby.creatorId });
-        
-        const multi = this.redis.multi();
-        multi.del(lobbyId);
-        multi.del(`user_lobby:${lobby.creatorId}`);
-        
-        console.log('💾 Executing Redis transaction for lobby deletion');
-        const results = await multi.exec();
-        
-        if (!results || results.some(result => !result[1])) {
-          console.warn('⚠️ Redis deletion partially failed:', results);
-        }
+    console.log('🗑️ Deleting lobby:', lobbyId);
 
-        lobby.status = 'closed';
-        this.activeLobbies.delete(lobbyId);
-        
-        // Очищаем rate limit данные для создателя лобби
-        this.userLobbyRequests.delete(lobby.creatorId);
-        console.log('🧹 Cleaned up rate limit data for creator:', lobby.creatorId);
-        
-        console.log('✅ Lobby successfully deleted:', lobbyId);
-      } else {
-        console.warn('⚠️ Lobby not found in memory:', lobbyId);
+    try {
+      const lobby = await this.getLobby(lobbyId);
+      if (!lobby) {
+        console.warn('⚠️ Lobby not found for deletion:', lobbyId);
+        return;
       }
+
+      // Очищаем индексы перед удалением
+      await this.cleanupLobbyIndices(lobby);
+
+      const multi = this.redis.multi();
+      
+      // Удаляем все связанные данные
+      multi.del(REDIS_KEYS.LOBBY(lobbyId));
+      multi.del(REDIS_KEYS.PENDING(lobbyId));
+      multi.del(REDIS_KEYS.WAIT(lobbyId));
+      multi.del(REDIS_KEYS.OPPONENT(lobbyId));
+      
+      const results = await multi.exec();
+      if (!results || results.some(result => !result[1])) {
+        console.warn('⚠️ Some lobby deletions failed:', {
+          lobbyId,
+          results
+        });
+      }
+
+      // Очищаем из памяти
+      this.activeLobbies.delete(lobbyId);
+
+      console.log('✅ Lobby deleted successfully:', lobbyId);
     } catch (error) {
-      console.error('❌ Error during lobby deletion:', error);
+      console.error('❌ Error deleting lobby:', error);
       throw error;
     }
   }
@@ -512,61 +681,74 @@ export class GameService {
 
   // Добавляем метод для периодической проверки консистентности данных
   private async cleanupInconsistentData(): Promise<void> {
-    const startTime = Date.now();
-    console.log('🧹 Starting inconsistent data cleanup', {
-      timestamp: new Date().toISOString(),
-      activeSessions: this.activeSessions.size,
-      activeLobbies: this.activeLobbies.size
-    });
+    if (!await this.acquireCleanupLock()) {
+      console.log('🔒 Cleanup already running');
+      return;
+    }
 
+    const metrics: CleanupMetrics = {
+      checked: 0,
+      cleaned: 0,
+      errors: 0,
+      startTime: Date.now()
+    };
+    
     try {
-      // Очищаем старые rate limit записи
-      const now = Date.now();
-      for (const [telegramId, data] of this.userLobbyRequests) {
-        if (now - data.timestamp > 60000) {
-          this.userLobbyRequests.delete(telegramId);
-        }
-      }
-
-      // Проверяем все активные лобби
-      for (const [lobbyId, lobby] of this.activeLobbies) {
-        const exists = await this.redis.exists(lobbyId);
-        if (!exists) {
-          this.activeLobbies.delete(lobbyId);
-          console.log('🗑️ Removed inconsistent lobby', {
+      const activeLobbies = await this.redis.smembers(REDIS_KEYS.ACTIVE_LOBBIES);
+      
+      for (const lobbyId of activeLobbies) {
+        metrics.checked++;
+        
+        try {
+          const lobbyData = await this.redis.get(REDIS_KEYS.LOBBY(lobbyId));
+          
+          if (!lobbyData) {
+            await this.deleteLobby(lobbyId);
+            metrics.cleaned++;
+            continue;
+          }
+          
+          const lobby = JSON.parse(lobbyData);
+          
+          // Проверяем все связанные данные
+          const [hasPending, hasWait, hasOpponent] = await Promise.all([
+            this.redis.exists(REDIS_KEYS.PENDING(lobbyId)),
+            this.redis.exists(REDIS_KEYS.WAIT(lobbyId)),
+            this.redis.exists(REDIS_KEYS.OPPONENT(lobbyId))
+          ]);
+          
+          let needsCleanup = false;
+          
+          // Проверяем консистентность статусов
+          if (lobby.status === 'pending' && !hasPending) needsCleanup = true;
+          if (lobby.status === 'wait' && !hasWait) needsCleanup = true;
+          if (lobby.opponentId && !hasOpponent) needsCleanup = true;
+          
+          if (needsCleanup) {
+            await this.deleteLobby(lobbyId);
+            metrics.cleaned++;
+          }
+        } catch (error) {
+          console.error('❌ Error processing lobby during cleanup:', {
             lobbyId,
-            creatorId: lobby.creatorId,
-            timestamp: new Date().toISOString()
+            error
           });
+          metrics.errors++;
         }
       }
-
-      // Проверяем все активные сессии
-      for (const [gameId, session] of this.activeSessions) {
-        const timeSinceLastMove = Date.now() - session.lastMoveTime;
-        if (timeSinceLastMove > 24 * 60 * 60 * 1000) { // 24 часа
-          this.activeSessions.delete(gameId);
-          console.log('🗑️ Removed stale game session', {
-            gameId,
-            timeSinceLastMove: Math.floor(timeSinceLastMove / 1000),
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-
-      console.log('✅ Cleanup completed', {
-        duration: Date.now() - startTime,
-        remainingSessions: this.activeSessions.size,
-        remainingLobbies: this.activeLobbies.size,
-        remainingRateLimits: this.userLobbyRequests.size,
-        timestamp: new Date().toISOString()
-      });
     } catch (error) {
-      console.error('❌ Error during cleanup:', {
-        error: error.stack,
-        duration: Date.now() - startTime,
-        timestamp: new Date().toISOString()
+      console.error('❌ Error during cleanup:', error);
+      metrics.errors++;
+    } finally {
+      metrics.endTime = Date.now();
+      
+      console.log('📊 Cleanup completed:', {
+        duration: metrics.endTime - metrics.startTime,
+        ...metrics
       });
+      
+      // Освобождаем блокировку
+      await this.redis.del(REDIS_KEYS.CLEANUP_LOCK);
     }
   }
 
@@ -612,6 +794,271 @@ export class GameService {
     } catch (error) {
       console.error('Error finding lobby by creator:', error);
       return null;
+    }
+  }
+
+  async setLobbyOpponent(lobbyId: string, opponentId: string): Promise<void> {
+    console.log('👥 Setting lobby opponent:', { lobbyId, opponentId });
+    
+    try {
+      const lobby = await this.getLobby(lobbyId);
+      if (!lobby) {
+        throw new Error('Lobby not found');
+      }
+
+      lobby.opponentId = opponentId;
+      
+      const multi = this.redis.multi();
+      
+      // Обновляем данные лобби с новым оппонентом
+      multi.set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify(lobby), 'EX', LOBBY_TTL);
+      multi.set(REDIS_KEYS.OPPONENT(lobbyId), opponentId, 'EX', LOBBY_TTL);
+      multi.set(REDIS_KEYS.USER_LOBBY(opponentId), lobbyId, 'EX', LOBBY_TTL);
+      
+      const results = await multi.exec();
+      
+      if (!results || results.some(result => !result[1])) {
+        console.error('❌ Redis transaction failed:', results);
+        throw new Error('Failed to set lobby opponent');
+      }
+      
+      // Обновляем индексы
+      await this.indexLobby(lobby);
+      
+      console.log('✅ Lobby opponent set:', { lobbyId, opponentId });
+    } catch (error) {
+      console.error('❌ Error setting lobby opponent:', error);
+      throw error;
+    }
+  }
+
+  // Проверка прав на изменение лобби
+  private async validateLobbyAccess(lobbyId: string, telegramId: string): Promise<boolean> {
+    const lobby = await this.getLobby(lobbyId);
+    return lobby?.creatorId === telegramId;
+  }
+
+  // Атомарное обновление статуса лобби
+  private async updateLobbyStatusAtomic(lobbyId: string, newStatus: LobbyStatus, opponentId?: string): Promise<void> {
+    const multi = this.redis.multi();
+    
+    // Обновляем основные данные
+    multi.set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify({
+      id: lobbyId,
+      status: newStatus,
+      ...(opponentId && { opponentId })
+    }), 'EX', LOBBY_TTL);
+    
+    // Обновляем статусы
+    if (newStatus === 'pending') {
+      multi.set(REDIS_KEYS.PENDING(lobbyId), '1', 'EX', PENDING_TTL);
+      multi.del(REDIS_KEYS.WAIT(lobbyId));
+    } else if (newStatus === 'wait') {
+      multi.set(REDIS_KEYS.WAIT(lobbyId), '1', 'EX', WAIT_TTL);
+      multi.del(REDIS_KEYS.PENDING(lobbyId));
+    } else {
+      multi.del(REDIS_KEYS.PENDING(lobbyId));
+      multi.del(REDIS_KEYS.WAIT(lobbyId));
+    }
+    
+    // Обновляем данные оппонента
+    if (opponentId) {
+      multi.set(REDIS_KEYS.OPPONENT(lobbyId), opponentId, 'EX', LOBBY_TTL);
+    }
+    
+    const results = await multi.exec();
+    if (!results || results.some(result => !result[1])) {
+      throw new Error('Failed to update lobby status atomically');
+    }
+  }
+
+  // Публичный метод для обновления статуса
+  async updateLobbyStatus(
+    lobbyId: string,
+    newStatus: LobbyStatus,
+    telegramId: string
+  ): Promise<void> {
+    console.log('🔄 Updating lobby status:', { lobbyId, newStatus, telegramId });
+    
+    try {
+      const lobby = await this.getLobby(lobbyId);
+      if (!lobby) {
+        throw new Error(TransitionError.NOT_FOUND);
+      }
+
+      // Валидация с проверками безопасности
+      await this.validateLobbyState(lobbyId, newStatus, telegramId);
+      
+      // Создаем бэкап текущего состояния
+      if (!await this.backupLobbyState(lobby)) {
+        throw new Error(TransitionError.BACKUP_FAILED);
+      }
+
+      try {
+        lobby.status = newStatus;
+        
+        const multi = this.redis.multi();
+        
+        // Обновляем основные данные
+        multi.set(REDIS_KEYS.LOBBY(lobbyId), JSON.stringify(lobby), 'EX', LOBBY_TTL);
+        
+        // Обновляем статусы
+        if (newStatus === 'pending') {
+          multi.set(REDIS_KEYS.PENDING(lobbyId), '1', 'EX', PENDING_TTL);
+          multi.del(REDIS_KEYS.WAIT(lobbyId));
+        } else if (newStatus === 'wait') {
+          multi.set(REDIS_KEYS.WAIT(lobbyId), '1', 'EX', WAIT_TTL);
+          multi.del(REDIS_KEYS.PENDING(lobbyId));
+        } else {
+          multi.del(REDIS_KEYS.PENDING(lobbyId));
+          multi.del(REDIS_KEYS.WAIT(lobbyId));
+        }
+        
+        const results = await multi.exec();
+        if (!results || results.some(result => !result[1])) {
+          throw new Error(TransitionError.REDIS_ERROR);
+        }
+        
+        // Обновляем индексы
+        await this.indexLobby(lobby);
+        
+        console.log('✅ Lobby status updated:', { lobbyId, newStatus });
+      } catch (error) {
+        // В случае ошибки пытаемся восстановить состояние
+        if (!await this.restoreLobbyState(lobbyId)) {
+          throw new Error(TransitionError.RESTORE_FAILED);
+        }
+        throw error;
+      }
+    } catch (error) {
+      console.error('❌ Error updating lobby status:', error);
+      throw error;
+    }
+  }
+
+  private async checkTransitionLimit(lobbyId: string): Promise<boolean> {
+    const now = Date.now();
+    
+    try {
+      // Получаем текущий лимит из Redis
+      const limitData = await this.redis.get(REDIS_KEYS.TRANSITION_LIMIT(lobbyId));
+      let limit: StatusTransitionLimit;
+      
+      if (!limitData) {
+        limit = { count: 1, timestamp: now };
+      } else {
+        limit = JSON.parse(limitData);
+        
+        // Проверяем временное окно
+        if (now - limit.timestamp > TRANSITION_LIMITS.WINDOW_MS) {
+          limit = { count: 1, timestamp: now };
+        } else if (limit.count >= TRANSITION_LIMITS.MAX_PER_MINUTE) {
+          console.warn('⚠️ Rate limit exceeded for lobby transitions:', {
+            lobbyId,
+            currentCount: limit.count,
+            windowStart: new Date(limit.timestamp).toISOString()
+          });
+          return false;
+        } else {
+          limit.count++;
+        }
+      }
+      
+      // Сохраняем обновленный лимит
+      await this.redis.set(
+        REDIS_KEYS.TRANSITION_LIMIT(lobbyId),
+        JSON.stringify(limit),
+        'EX',
+        Math.ceil(TRANSITION_LIMITS.WINDOW_MS / 1000)
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Error checking transition limit:', error);
+      return false;
+    }
+  }
+
+  private async backupLobbyState(lobby: Lobby): Promise<boolean> {
+    try {
+      await this.redis.set(
+        REDIS_KEYS.BACKUP(lobby.id),
+        JSON.stringify(lobby),
+        'EX',
+        LOBBY_TTL
+      );
+      return true;
+    } catch (error) {
+      console.error('❌ Error backing up lobby state:', error);
+      return false;
+    }
+  }
+
+  private async restoreLobbyState(lobbyId: string): Promise<boolean> {
+    try {
+      const backupData = await this.redis.get(REDIS_KEYS.BACKUP(lobbyId));
+      if (!backupData) {
+        console.warn('⚠️ No backup found for lobby:', lobbyId);
+        return false;
+      }
+
+      const backup: Lobby = JSON.parse(backupData);
+      const multi = this.redis.multi();
+      
+      // Восстанавливаем основные данные
+      multi.set(REDIS_KEYS.LOBBY(lobbyId), backupData, 'EX', LOBBY_TTL);
+      multi.set(REDIS_KEYS.USER_LOBBY(backup.creatorId), lobbyId, 'EX', LOBBY_TTL);
+      
+      // Восстанавливаем статусы
+      if (backup.status === 'pending') {
+        multi.set(REDIS_KEYS.PENDING(lobbyId), '1', 'EX', PENDING_TTL);
+        multi.del(REDIS_KEYS.WAIT(lobbyId));
+      } else if (backup.status === 'wait') {
+        multi.set(REDIS_KEYS.WAIT(lobbyId), '1', 'EX', WAIT_TTL);
+        multi.del(REDIS_KEYS.PENDING(lobbyId));
+      }
+      
+      if (backup.opponentId) {
+        multi.set(REDIS_KEYS.OPPONENT(lobbyId), backup.opponentId, 'EX', LOBBY_TTL);
+        multi.set(REDIS_KEYS.USER_LOBBY(backup.opponentId), lobbyId, 'EX', LOBBY_TTL);
+      }
+      
+      const results = await multi.exec();
+      if (!results || results.some(result => !result[1])) {
+        console.error('❌ Failed to restore lobby state:', lobbyId);
+        return false;
+      }
+      
+      // Восстанавливаем в памяти
+      this.activeLobbies.set(lobbyId, backup);
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Error restoring lobby state:', error);
+      return false;
+    }
+  }
+
+  private async acquireCleanupLock(): Promise<boolean> {
+    try {
+      // Используем setnx вместо set с опцией NX
+      const locked = await this.redis.setnx(
+        REDIS_KEYS.CLEANUP_LOCK,
+        Date.now().toString()
+      );
+      
+      if (locked) {
+        // Если успешно установили блокировку, устанавливаем TTL
+        await this.redis.expire(
+          REDIS_KEYS.CLEANUP_LOCK,
+          TRANSITION_LIMITS.CLEANUP_LOCK_TTL
+        );
+      }
+      
+      return locked === 1;
+    } catch (error) {
+      console.error('❌ Error acquiring cleanup lock:', error);
+      return false;
     }
   }
 } 

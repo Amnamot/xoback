@@ -22,7 +22,8 @@ import {
   JoinGameDto,
   TimeExpiredDto,
   CreateInviteDto,
-  CancelLobbyDto
+  CancelLobbyDto,
+  UpdateLobbyStatusDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -981,6 +982,61 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       console.error('Error checking active lobby:', error);
       return { error: 'Failed to check active lobby' };
+    }
+  }
+
+  @SubscribeMessage('updateLobbyStatus')
+  @UsePipes(new ValidationPipe())
+  async handleUpdateLobbyStatus(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: UpdateLobbyStatusDto
+  ) {
+    console.log('🔄 Handling lobby status update:', {
+      telegramId: data.telegramId,
+      lobbyId: data.lobbyId,
+      newStatus: data.newStatus,
+      socketId: client.id,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      const updatedLobby = await this.gameService.updateLobbyStatus(
+        data.lobbyId,
+        data.newStatus,
+        data.telegramId
+      );
+
+      // Оповещаем всех участников лобби
+      this.server.to(data.lobbyId).emit('lobbyStatusUpdated', {
+        lobbyId: data.lobbyId,
+        status: data.newStatus,
+        opponentId: data.opponentId,
+        timestamp: Date.now()
+      });
+
+      console.log('✅ Lobby status update handled:', {
+        lobbyId: data.lobbyId,
+        newStatus: data.newStatus,
+        timestamp: new Date().toISOString()
+      });
+
+      return {
+        status: 'updated',
+        lobby: updatedLobby,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      console.error('❌ Error handling lobby status update:', {
+        error: error.message,
+        lobbyId: data.lobbyId,
+        timestamp: new Date().toISOString()
+      });
+
+      return {
+        status: 'error',
+        message: error.message,
+        timestamp: Date.now()
+      };
     }
   }
 

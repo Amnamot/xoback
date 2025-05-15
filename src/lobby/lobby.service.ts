@@ -20,37 +20,11 @@ interface TelegramPreparedMessageResponse {
 @Injectable()
 export class LobbyService {
   constructor(
+    @InjectRedis() private readonly redis: Redis,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-    @InjectRedis() private readonly redis: Redis,
     private readonly httpService: HttpService
   ) {}
-
-  async createLobby(initData: InitDataParsed) {
-    const telegramId = initData.user?.id;
-    const firstName = initData.user?.first_name || 'Игрок';
-
-    if (!telegramId) {
-      throw new UnauthorizedException('Invalid Telegram ID');
-    }
-
-    const user = await this.prisma.user.findUnique({
-      where: { telegramId: telegramId.toString() },
-    });
-
-    if (!user) throw new NotFoundException("User not found");
-
-    const lobbyId = `lobby_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    await this.redis.set(lobbyId, telegramId.toString(), 'EX', 180);
-
-    const inviteUrl = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
-
-    console.log('✅ Lobby successfully created in Redis');
-    console.log('📦 Lobby saved in memory');
-    console.log('📢 Lobby ready event emitted');
-
-    return { lobbyId, inviteUrl };
-  }
 
   async createInvite(tgId: string) {
     console.log('🔍 Creating invite for telegramId:', tgId);
@@ -148,9 +122,9 @@ export class LobbyService {
       const value = await this.redis.get(key);
       if (value === tgId.toString()) {
         const ttl = await this.redis.ttl(key);
-        return { timeLeft: ttl };
+        return { ttl };
       }
     }
-    throw new NotFoundException('Lobby not found');
+    return { ttl: 0 };
   }
 }
