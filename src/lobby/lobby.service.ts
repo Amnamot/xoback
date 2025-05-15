@@ -8,6 +8,7 @@ import { InjectRedis } from '@nestjs-modules/ioredis';
 import { randomBytes } from 'crypto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { Logger } from '@nestjs/common';
 
 interface TelegramPreparedMessageResponse {
   ok: boolean;
@@ -19,53 +20,75 @@ interface TelegramPreparedMessageResponse {
 
 @Injectable()
 export class LobbyService {
+  private readonly logger = new Logger('LobbyService');
+
   constructor(
     @InjectRedis() private readonly redis: Redis,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly httpService: HttpService
-  ) {}
+  ) {
+    this.logger.log('LobbyService initialized');
+  }
 
   async createInvite(tgId: string) {
-    console.log('🔍 Creating invite for telegramId:', tgId);
+    this.logger.log({
+      event: 'createInviteStarted',
+      telegramId: tgId,
+      timestamp: new Date().toISOString()
+    });
+
     const user = await this.prisma.user.findUnique({ where: { telegramId: tgId.toString() } });
     const firstName = user?.firstName || "Gamer";
 
     const keys = await this.redis.keys('lobby_*');
-    console.log('📋 Found Redis keys:', keys);
+    this.logger.debug({
+      event: 'searchingExistingLobbies',
+      foundKeys: keys.length,
+      telegramId: tgId
+    });
+
     let lobbyId: string | null = null;
 
     for (const key of keys) {
       const value = await this.redis.get(key);
       if (!value) continue;
       
-      console.log(`🔑 Checking lobby ${key}:`, {
-        value,
-        expectedTgId: tgId.toString()
-      });
-      
       try {
         const lobbyData = JSON.parse(value);
-        console.log('📦 Parsed lobby data:', {
-          creatorId: lobbyData.creatorId,
-          matches: lobbyData.creatorId === tgId.toString()
-        });
-        
         if (lobbyData.creatorId === tgId.toString()) {
           lobbyId = key;
+          this.logger.debug({
+            event: 'existingLobbyFound',
+            lobbyId: key,
+            telegramId: tgId
+          });
           break;
         }
       } catch (error) {
-        console.error('❌ Error parsing lobby data:', error);
+        this.logger.error({
+          event: 'lobbyDataParseError',
+          error: error.message,
+          key,
+          telegramId: tgId
+        });
       }
     }
 
     if (!lobbyId) {
-      console.log('❌ No matching lobby found for telegramId:', tgId);
+      this.logger.warn({
+        event: 'lobbyNotFound',
+        telegramId: tgId
+      });
       throw new ForbiddenException('Lobby not found');
     }
 
-    console.log('✅ Found lobby:', lobbyId);
+    this.logger.log({
+      event: 'creatingInviteMessage',
+      lobbyId,
+      telegramId: tgId,
+      firstName
+    });
 
     const result = {
       type: "article",
@@ -92,53 +115,147 @@ export class LobbyService {
     const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
     const url = `${apiUrl}?user_id=${tgId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
 
-    const { data }: any = await firstValueFrom(this.httpService.get(url));
-    return { messageId: data.result.id, lobbyId };
+    try {
+      const { data }: any = await firstValueFrom(this.httpService.get(url));
+      this.logger.log({
+        event: 'inviteCreated',
+        lobbyId,
+        telegramId: tgId,
+        messageId: data.result.id
+      });
+      return { messageId: data.result.id, lobbyId };
+    } catch (error) {
+      this.logger.error({
+        event: 'inviteCreationError',
+        error: error.message,
+        lobbyId,
+        telegramId: tgId
+      });
+      throw error;
+    }
   }
 
   async cancelLobbyPublic(lobbyId: string, telegramId: string) {
+    this.logger.log({
+      event: 'cancelLobbyStarted',
+      lobbyId,
+      telegramId
+    });
+
     const value = await this.redis.get(lobbyId);
     if (value && value === telegramId) {
       await this.redis.del(lobbyId);
+      this.logger.log({
+        event: 'lobbyCancelled',
+        lobbyId,
+        telegramId
+      });
       return { success: true };
     }
+
+    this.logger.warn({
+      event: 'cancelLobbyFailed',
+      reason: 'notFoundOrUnauthorized',
+      lobbyId,
+      telegramId
+    });
     throw new NotFoundException('Lobby not found or unauthorized');
   }
 
   async joinLobby(tgId: string, lobbyId: string) {
+    this.logger.log({
+      event: 'joinLobbyStarted',
+      lobbyId,
+      telegramId: tgId
+    });
+
     const ownerTgId = await this.redis.get(lobbyId);
     if (!ownerTgId) {
+      this.logger.warn({
+        event: 'joinLobbyFailed',
+        reason: 'lobbyNotFound',
+        lobbyId,
+        telegramId: tgId
+      });
       throw new NotFoundException('Lobby not found');
     }
+
     if (ownerTgId === tgId.toString()) {
+      this.logger.log({
+        event: 'joinLobbyCreator',
+        lobbyId,
+        telegramId: tgId
+      });
       return { status: 'creator' };
     }
+
+    this.logger.log({
+      event: 'joinLobbySuccess',
+      lobbyId,
+      telegramId: tgId,
+      creatorId: ownerTgId
+    });
     return { success: true };
   }
 
   async getTimeLeft(tgId: string) {
+    this.logger.debug({
+      event: 'getTimeLeftStarted',
+      telegramId: tgId
+    });
+
     const keys = await this.redis.keys('lobby_*');
     for (const key of keys) {
       const value = await this.redis.get(key);
       if (value === tgId.toString()) {
         const ttl = await this.redis.ttl(key);
+        this.logger.debug({
+          event: 'timeLeftFound',
+          lobbyId: key,
+          telegramId: tgId,
+          ttl
+        });
         return { ttl };
       }
     }
+
+    this.logger.debug({
+      event: 'timeLeftNotFound',
+      telegramId: tgId
+    });
     return { ttl: 0 };
   }
 
   async getLobbyTTL(lobbyId: string): Promise<number> {
+    this.logger.debug({
+      event: 'getLobbyTTLStarted',
+      lobbyId
+    });
+
     try {
       const ttl = await this.redis.ttl(lobbyId);
+      this.logger.debug({
+        event: 'lobbyTTLFound',
+        lobbyId,
+        ttl: ttl > 0 ? ttl : 180
+      });
       return ttl > 0 ? ttl : 180;
     } catch (error) {
-      console.error('Error getting lobby TTL:', error);
+      this.logger.error({
+        event: 'getLobbyTTLError',
+        error: error.message,
+        lobbyId
+      });
       return 180;
     }
   }
 
   async findLobbyByCreator(telegramId: string) {
+    this.logger.debug({
+      event: 'findLobbyByCreatorStarted',
+      telegramId
+    });
+
     const keys = await this.redis.keys('lobby_*');
     
     for (const key of keys) {
@@ -147,16 +264,30 @@ export class LobbyService {
       
       try {
         if (value === telegramId.toString()) {
+          this.logger.debug({
+            event: 'lobbyFoundByCreator',
+            lobbyId: key,
+            telegramId
+          });
           return {
             id: key,
             status: 'active'
           };
         }
       } catch (error) {
-        console.error('Error checking lobby:', error);
+        this.logger.error({
+          event: 'findLobbyByCreatorError',
+          error: error.message,
+          key,
+          telegramId
+        });
       }
     }
     
+    this.logger.debug({
+      event: 'lobbyNotFoundByCreator',
+      telegramId
+    });
     return null;
   }
 }

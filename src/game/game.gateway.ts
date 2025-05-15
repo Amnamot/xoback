@@ -9,7 +9,7 @@ import {
   MessageBody
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Injectable, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Injectable, UsePipes, ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GameService } from './game.service';
 import {
@@ -52,6 +52,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private clientLobbies = new Map<string, string>(); // telegramId -> lobbyId
   private reconnectTimeouts = new Map<string, NodeJS.Timeout>(); // telegramId -> timeout
   private cleanupInterval: NodeJS.Timeout;
+  private readonly logger = new Logger('GameGateway');
 
   constructor(
     private readonly gameService: GameService,
@@ -216,6 +217,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.clientGames.delete(telegramId);
       }
     }
+
+    this.logger.log({
+      event: 'clientConnected',
+      clientId: client.id,
+      telegramId,
+      ip: client.handshake.address,
+      userAgent: client.handshake.headers['user-agent'],
+      timestamp: new Date().toISOString()
+    });
   }
 
   async handleDisconnect(client: Socket) {
@@ -270,6 +280,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.reconnectTimeouts.set(telegramId, timeout);
       }
     }
+
+    this.logger.log({
+      event: 'clientDisconnected',
+      clientId: client.id,
+      telegramId,
+      timestamp: new Date().toISOString()
+    });
   }
 
   @SubscribeMessage('createLobby')
@@ -278,6 +295,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateLobbyDto
   ) {
+    this.logger.log({
+      event: 'createLobbyStarted',
+      clientId: client.id,
+      telegramId: data.telegramId,
+      timestamp: new Date().toISOString()
+    });
+    
     console.log('🎮 Handling createLobby request:', { 
       telegramId: data.telegramId, 
       socketId: client.id,
@@ -331,6 +355,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         activeConnections: this.server.sockets.sockets.size
       });
       
+      this.logger.log({
+        event: 'lobbyCreated',
+        clientId: client.id,
+        telegramId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+      
       return { 
         status: 'created', 
         lobbyId: lobby.id,
@@ -342,6 +373,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Очищаем связи при ошибке
       this.clientLobbies.delete(data.telegramId);
       console.log('🧹 Cleaned up client-lobby association for:', data.telegramId);
+      
+      this.logger.error({
+        event: 'createLobbyError',
+        clientId: client.id,
+        telegramId: data.telegramId,
+        error: error instanceof Error ? error.message : 'Failed to create lobby',
+        timestamp: new Date().toISOString()
+      });
       
       return { 
         status: 'error',
@@ -357,6 +396,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinLobbyDto
   ) {
+    this.logger.log({
+      event: 'joinLobbyStarted',
+      clientId: client.id,
+      telegramId: data.telegramId,
+      lobbyId: data.lobbyId,
+      timestamp: new Date().toISOString()
+    });
+
     console.log('🎮 Handling joinLobby request:', {
       lobbyId: data.lobbyId,
       telegramId: data.telegramId,
@@ -478,6 +525,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         activeGames: this.clientGames.size
       });
 
+      this.logger.log({
+        event: 'lobbyJoined',
+        clientId: client.id,
+        telegramId: data.telegramId,
+        lobbyId: data.lobbyId,
+        timestamp: new Date().toISOString()
+      });
+
       return { status: 'joined' };
     } catch (error) {
       console.error('❌ Error joining lobby:', {
@@ -488,6 +543,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString(),
         socketId: client.id,
         clientRooms: Array.from(client.rooms)
+      });
+      
+      this.logger.error({
+        event: 'joinLobbyError',
+        clientId: client.id,
+        telegramId: data.telegramId,
+        lobbyId: data.lobbyId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString()
       });
       
       return {
@@ -505,6 +570,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const startTime = Date.now();
     const telegramId = client.handshake.query.telegramId as string;
+
+    this.logger.log({
+      event: 'makeMoveStarted',
+      clientId: client.id,
+      telegramId,
+      gameId: data.gameId,
+      position: data.position,
+      player: data.player,
+      moveTime: data.moveTime,
+      timestamp: new Date().toISOString()
+    });
 
     console.log('🎯 Handling move request', {
       gameId: data.gameId,
@@ -597,12 +673,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         processingTime: Date.now() - startTime,
         timestamp: new Date().toISOString()
       });
+
+      this.logger.log({
+        event: 'moveCompleted',
+        clientId: client.id,
+        telegramId,
+        gameId: data.gameId,
+        position: data.position,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
       console.error('❌ Error processing move:', {
         gameId: data.gameId,
         telegramId,
         error: error.stack,
         processingTime: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+
+      this.logger.error({
+        event: 'makeMoveError',
+        clientId: client.id,
+        telegramId,
+        gameId: data.gameId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
         timestamp: new Date().toISOString()
       });
     }
@@ -950,11 +1045,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
   ) {
-    console.log('📱 UI state update', {
+    this.logger.log({
+      event: 'uiStateUpdate',
+      clientId: client.id,
       telegramId: data.telegramId,
       state: data.state,
       details: data.details,
-      socketId: client.id,
       timestamp: new Date().toISOString()
     });
   }
