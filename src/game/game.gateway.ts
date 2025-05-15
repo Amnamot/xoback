@@ -378,7 +378,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { 
         status: 'error',
         errorType: 'expired',
-        message: 'Either the battle is over, or the link is very old...'
+        message: 'The battle you are looking for is over.<br />Ask your friend to create a new invitation!<br />Or create your own Game!'
       };
     }
 
