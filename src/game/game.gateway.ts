@@ -882,22 +882,60 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Отправляем сообщение через Telegram Bot API
       const BOT_TOKEN = this.configService.get("BOT_TOKEN");
-      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/saveInlineMessage`;
-      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}`;
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
+      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
       
       console.log('🔗 Telegram API URL (without token):', url.replace(BOT_TOKEN, 'BOT_TOKEN'));
 
-      const { data: response } = await firstValueFrom(this.httpService.get(url));
-      
-      console.log('📨 Telegram API response:', {
-        response,
+      // Добавляем обработку таймаутов и повторных попыток
+      const maxRetries = 3;
+      let retryCount = 0;
+      let lastError = null;
+
+      while (retryCount < maxRetries) {
+        try {
+          const { data: response } = await firstValueFrom(
+            this.httpService.get(url, { 
+              timeout: 5000,
+              headers: {
+                'User-Agent': 'TicTacToe-Bot/1.0'
+              }
+            })
+          );
+          
+          console.log('📨 Telegram API response:', {
+            response,
+            attempt: retryCount + 1,
+            timestamp: new Date().toISOString()
+          });
+
+          return { 
+            messageId: response.result.id, 
+            lobbyId: lobby.id 
+          };
+        } catch (error) {
+          lastError = error;
+          retryCount++;
+          
+          console.warn(`❌ Attempt ${retryCount}/${maxRetries} failed:`, {
+            error: error.message,
+            code: error.code,
+            timestamp: new Date().toISOString()
+          });
+
+          if (retryCount < maxRetries) {
+            // Экспоненциальная задержка перед следующей попыткой
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+          }
+        }
+      }
+
+      console.error('❌ All retry attempts failed:', {
+        error: lastError?.message,
+        lobbyId: lobby.id,
         timestamp: new Date().toISOString()
       });
-
-      return { 
-        messageId: response.result.id, 
-        lobbyId: lobby.id 
-      };
+      return { error: 'Failed to create invite' };
     } catch (error) {
       console.error('❌ Error creating invite:', error);
       return { error: 'Failed to create invite' };

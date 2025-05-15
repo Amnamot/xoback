@@ -116,14 +116,57 @@ export class LobbyService {
     const url = `${apiUrl}?user_id=${tgId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
 
     try {
-      const { data }: any = await firstValueFrom(this.httpService.get(url));
-      this.logger.log({
-        event: 'inviteCreated',
+      const maxRetries = 3;
+      let retryCount = 0;
+      let lastError = null;
+
+      while (retryCount < maxRetries) {
+        try {
+          const { data }: any = await firstValueFrom(
+            this.httpService.get(url, { 
+              timeout: 5000,
+              headers: {
+                'User-Agent': 'TicTacToe-Bot/1.0'
+              }
+            })
+          );
+
+          this.logger.log({
+            event: 'inviteCreated',
+            lobbyId,
+            telegramId: tgId,
+            messageId: data.result.id,
+            attempt: retryCount + 1
+          });
+
+          return { messageId: data.result.id, lobbyId };
+        } catch (error) {
+          lastError = error;
+          retryCount++;
+          
+          this.logger.warn({
+            event: 'inviteCreationRetryFailed',
+            attempt: retryCount,
+            maxRetries,
+            error: error.message,
+            code: error.code,
+            lobbyId,
+            telegramId: tgId
+          });
+
+          if (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+          }
+        }
+      }
+
+      this.logger.error({
+        event: 'inviteCreationAllRetriesFailed',
+        error: lastError?.message,
         lobbyId,
-        telegramId: tgId,
-        messageId: data.result.id
+        telegramId: tgId
       });
-      return { messageId: data.result.id, lobbyId };
+      throw new Error('Failed to create invite after all retries');
     } catch (error) {
       this.logger.error({
         event: 'inviteCreationError',
