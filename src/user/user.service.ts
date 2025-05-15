@@ -114,7 +114,7 @@ export class UserService {
             userName: initData.username || user.userName,
             firstName: initData.first_name || user.firstName,
             lastName: initData.last_name || user.lastName,
-            lastSeen: new Date()
+            lastVisit: new Date()
           }
         });
 
@@ -138,7 +138,7 @@ export class UserService {
           numGames: 0,
           numWins: 0,
           stars: 0,
-          lastSeen: new Date()
+          lastVisit: new Date()
         }
       });
 
@@ -179,7 +179,7 @@ export class UserService {
         data: {
           numGames: { increment: 1 },
           numWins: won ? { increment: 1 } : undefined,
-          lastSeen: new Date()
+          lastVisit: new Date()
         }
       });
 
@@ -219,7 +219,7 @@ export class UserService {
         where: { telegramId },
         data: {
           stars: { increment: amount },
-          lastSeen: new Date()
+          lastVisit: new Date()
         }
       });
 
