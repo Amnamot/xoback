@@ -1,7 +1,7 @@
 // src/game/game.gateway.ts v1.0.0
 import { 
   WebSocketGateway, 
-  WebSocketServer, 
+  WebSocketServer,
   SubscribeMessage, 
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -84,7 +84,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         event: 'clientConnected',
         clientId: client.id,
         telegramId,
-        username: client.username,
+        userName: client.userName,
         timestamp: new Date().toISOString()
       });
 
