@@ -12,7 +12,6 @@ import { Server } from 'socket.io';
 import { Injectable, Logger, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GameService } from './game.service';
-import { WsAuthGuard } from './guards/ws-auth.guard';
 import { SocketWithAuth } from './types/socket.types';
 import {
   CreateLobbyDto,
@@ -270,7 +269,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  @UseGuards(WsAuthGuard)
   @SubscribeMessage('createLobby')
   async handleCreateLobby(
     @ConnectedSocket() client: SocketWithAuth,
@@ -322,7 +320,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('joinLobby')
-  @UseGuards(WsAuthGuard)
   async handleJoinLobby(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: JoinLobbyDto
@@ -495,7 +492,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('makeMove')
-  @UseGuards(WsAuthGuard)
   async handleMove(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: MakeMoveDto
@@ -636,7 +632,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('updatePlayerTime')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleTimeUpdate(
     @ConnectedSocket() client: SocketWithAuth,
@@ -662,7 +657,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('gameOver')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleGameOver(
     @ConnectedSocket() client: SocketWithAuth,
@@ -679,7 +673,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('joinGame')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleJoinGame(
     @ConnectedSocket() client: SocketWithAuth,
@@ -692,7 +685,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('timeExpired')
-  @UseGuards(WsAuthGuard)
   async handleTimeExpired(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: TimeExpiredDto
@@ -772,7 +764,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('createInvite')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleCreateInvite(
     @ConnectedSocket() client: SocketWithAuth,
@@ -880,7 +871,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('cancelLobby')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleCancelLobby(
     @ConnectedSocket() client: SocketWithAuth,
@@ -970,7 +960,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('updateViewport')
-  @UseGuards(WsAuthGuard)
   async handleViewportUpdate(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: UpdateViewportDto
@@ -1017,7 +1006,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('uiState')
-  @UseGuards(WsAuthGuard)
   async handleUiState(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
@@ -1033,7 +1021,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('checkActiveLobby')
-  @UseGuards(WsAuthGuard)
   async handleCheckActiveLobby(
     @ConnectedSocket() client: SocketWithAuth,
     @MessageBody() data: { telegramId: string }
@@ -1060,7 +1047,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('updateLobbyStatus')
-  @UseGuards(WsAuthGuard)
   @UsePipes(new ValidationPipe())
   async handleUpdateLobbyStatus(
     @ConnectedSocket() client: SocketWithAuth,

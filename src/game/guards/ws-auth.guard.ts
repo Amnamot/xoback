@@ -30,7 +30,7 @@ export class WsAuthGuard implements CanActivate {
       // Добавляем данные пользователя в сокет
       (client as any).telegramId = telegramId;
       (client as any).firstName = user.firstName;
-      (client as any).username = user.username;
+      (client as any).username = user.userName;
 
       return true;
     } catch (error) {
