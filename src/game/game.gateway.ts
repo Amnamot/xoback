@@ -143,72 +143,63 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       try {
         const session = await this.gameService.getGameSession(gameId);
         if (!session) {
-          // Если сессия не найдена, проверяем, не закончилась ли игра
-          const gameResult = await this.gameService.getGameResult(gameId);
-          if (gameResult) {
-            client.emit('showGameResult', {
-              result: gameResult.winner === telegramId ? 'win' : 'loss',
-              reason: gameResult.reason,
-              statistics: gameResult.statistics
-            });
-            // Очищаем связь с игрой
-            this.clientGames.delete(telegramId);
-            return;
-          }
+          // Если сессия не найдена, очищаем связь с игрой
+          this.clientGames.delete(telegramId);
+          return;
+        }
+
+        const currentTime = Date.now();
+        const timeSinceLastMove = currentTime - session.lastMoveTime;
+        const MAX_MOVE_TIME = 30000; // 30 секунд на ход
+
+        // Если это был ход отключившегося игрока и время истекло
+        if (session.currentTurn === telegramId && timeSinceLastMove > MAX_MOVE_TIME) {
+          // Определяем победителя (противник отключившегося)
+          const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+          
+          // Завершаем игру
+          await this.gameService.endGameSession(gameId, winner, 'timeout_on_reconnect');
+          
+          // Отправляем результат переподключившемуся игроку
+          client.emit('showGameResult', {
+            result: 'loss',
+            reason: 'timeout_on_reconnect',
+            statistics: {
+              totalTime: Math.floor((currentTime - session.startedAt) / 1000),
+              moves: session.numMoves,
+              playerTime1: session.playerTime1,
+              playerTime2: session.playerTime2,
+              lastMoveTime: timeSinceLastMove
+            }
+          });
+
+          // Уведомляем оппонента
+          this.server.to(gameId).emit('gameEnded', {
+            winner,
+            reason: 'timeout_on_reconnect',
+            statistics: {
+              totalTime: Math.floor((currentTime - session.startedAt) / 1000),
+              moves: session.numMoves,
+              playerTime1: session.playerTime1,
+              playerTime2: session.playerTime2,
+              lastMoveTime: timeSinceLastMove
+            }
+          });
+
+          // Очищаем связи с игрой
+          this.clientGames.delete(session.creatorId);
+          this.clientGames.delete(session.opponentId);
         } else {
-          const currentTime = Date.now();
-          const timeSinceLastMove = currentTime - session.lastMoveTime;
-          const MAX_MOVE_TIME = 30000; // 30 секунд на ход
-
-          // Если это был ход отключившегося игрока и время истекло
-          if (session.currentTurn === telegramId && timeSinceLastMove > MAX_MOVE_TIME) {
-            // Определяем победителя (противник отключившегося)
-            const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-            
-            // Завершаем игру
-            await this.gameService.endGameSession(gameId, winner, 'timeout_on_reconnect');
-            
-            // Отправляем результат переподключившемуся игроку
-            client.emit('showGameResult', {
-              result: 'loss',
-              reason: 'timeout_on_reconnect',
-              statistics: {
-                totalTime: Math.floor((currentTime - session.startedAt) / 1000),
-                moves: session.numMoves,
-                playerTime1: session.playerTime1,
-                playerTime2: session.playerTime2,
-                lastMoveTime: timeSinceLastMove
-              }
-            });
-
-            // Уведомляем оппонента
-            this.server.to(gameId).emit('gameEnded', {
-              winner,
-              reason: 'timeout_on_reconnect',
-              statistics: {
-                totalTime: Math.floor((currentTime - session.startedAt) / 1000),
-                moves: session.numMoves,
-                playerTime1: session.playerTime1,
-                playerTime2: session.playerTime2,
-                lastMoveTime: timeSinceLastMove
-              }
-            });
-
-            // Очищаем связи с игрой
-            this.clientGames.delete(session.creatorId);
-            this.clientGames.delete(session.opponentId);
-          } else {
-            // Если время не истекло или это не ход отключившегося - продолжаем игру
-            client.join(gameId);
-            this.server.to(gameId).emit('playerReconnected', {
-              telegramId,
-              gameState: {
-                ...session,
-                serverTime: currentTime,
-                timeLeft: Math.max(0, MAX_MOVE_TIME - timeSinceLastMove) // оставшееся время хода
-              }
-            });
-          }
+          // Если время не истекло или это не ход отключившегося - продолжаем игру
+          client.join(gameId);
+          this.server.to(gameId).emit('playerReconnected', {
+            telegramId,
+            gameState: {
+              ...session,
+              serverTime: currentTime,
+              timeLeft: Math.max(0, MAX_MOVE_TIME - timeSinceLastMove)
+            }
+          });
         }
       } catch (error) {
         console.error('Error reconnecting to game:', error);

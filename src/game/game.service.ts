@@ -342,67 +342,38 @@ export class GameService {
     return session;
   }
 
-  async getGameResult(gameId: string): Promise<{ 
-    winner: string;
-    reason: string;
-    statistics: {
-      totalTime: number;
-      moves: number;
-      playerTime1: number;
-      playerTime2: number;
-    };
-  } | null> {
-    try {
-      // Проверяем в БД
-      const game = await this.prisma.game.findFirst({
-        where: {
-          id: parseInt(gameId)
-        }
-      });
-
-      if (!game) return null;
-
-      return {
-        winner: game.winner,
-        reason: game.reason || 'unknown',
-        statistics: {
-          totalTime: game.time,
-          moves: game.numMoves,
-          playerTime1: game.playertime1,
-          playerTime2: game.playertime2
-        }
-      };
-    } catch (error) {
-      console.error('Error getting game result:', error);
-      return null;
-    }
-  }
-
   async endGameSession(gameId: string, winnerId: string, reason: string = 'unknown'): Promise<void> {
     const session = this.activeSessions.get(gameId);
     if (!session) {
       throw new Error('Game session not found');
     }
 
-    // Создаем запись в БД
-    const game = await this.prisma.game.create({
-      data: {
-        createdBy: session.creatorId,
-        rival: session.opponentId,
-        winner: winnerId,
-        reason: reason,
-        pay: session.pay,
-        numMoves: session.numMoves,
-        time: Math.floor((Date.now() - session.startedAt) / 1000),
-        playertime1: Math.floor(session.playerTime1 / 1000),
-        playertime2: Math.floor(session.playerTime2 / 1000),
-        created: new Date(session.startedAt),
-        finished: new Date()
-      }
-    });
+    try {
+      // Создаем запись в БД только при завершении игры
+      await this.prisma.game.create({
+        data: {
+          createdBy: session.creatorId,
+          rival: session.opponentId,
+          winner: winnerId,
+          reason: reason,
+          pay: session.pay,
+          numMoves: session.numMoves,
+          time: Math.floor((Date.now() - session.startedAt) / 1000),
+          playertime1: Math.floor(session.playerTime1 / 1000),
+          playertime2: Math.floor(session.playerTime2 / 1000),
+          created: new Date(session.startedAt),
+          finished: new Date()
+        }
+      });
 
-    // Удаляем сессию
-    this.activeSessions.delete(gameId);
+      // Удаляем сессию из памяти
+      this.activeSessions.delete(gameId);
+    } catch (error) {
+      console.error('Error saving game result:', error);
+      // Даже если сохранение в БД не удалось, все равно удаляем сессию
+      this.activeSessions.delete(gameId);
+      throw error;
+    }
   }
 
   // Добавляем метод для периодической проверки консистентности данных

@@ -10,7 +10,6 @@ export interface Lobby {
 export interface GameSession {
   // Идентификация
   id: string;                    // ID игры (тот же, что был у лобби)
-  dbId?: number;                 // ID в базе данных (после записи)
   
   // Игроки
   creatorId: string;            // telegramId создателя (createdBy в БД)
