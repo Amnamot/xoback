@@ -452,13 +452,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       
       // Проверяем, что создатель в комнате
       const creatorSocket = this.connectedClients.get(lobby.creatorId);
-      if (creatorSocket && !creatorSocket.rooms.has(data.lobbyId)) {
-        console.log('🔄 Re-joining creator to lobby room:', {
+      if (creatorSocket) {
+        console.log('🔄 Joining creator to game room:', {
           lobbyId: data.lobbyId,
           creatorId: lobby.creatorId,
           socketId: creatorSocket.id
         });
+        
+        // Явно присоединяем создателя к игровой комнате
         creatorSocket.join(data.lobbyId);
+        
+        // Обновляем связь создателя с игрой
+        this.clientGames.set(lobby.creatorId, data.lobbyId);
       }
 
       // Проверяем состав комнаты после всех операций
