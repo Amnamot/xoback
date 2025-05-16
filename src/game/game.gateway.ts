@@ -429,19 +429,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     try {
-      console.log('🎲 [Game Session] Creating game session:', {
+      console.log('🎮 [Game Join] Opponent joining lobby:', {
         lobbyId: data.lobbyId,
-        creatorId: lobby.creatorId,
-        opponentId: data.telegramId,
-        creatorSocket: {
-          exists: this.connectedClients.has(lobby.creatorId),
-          connected: this.connectedClients.get(lobby.creatorId)?.connected || false,
-          rooms: Array.from(this.connectedClients.get(lobby.creatorId)?.rooms || [])
+        opponent: {
+          id: data.telegramId,
+          socketId: client.id
         },
-        opponentSocket: {
-          exists: this.connectedClients.has(data.telegramId),
-          connected: client.connected,
-          rooms: Array.from(client.rooms)
+        creator: {
+          id: lobby.creatorId,
+          socketExists: this.connectedClients.has(lobby.creatorId),
+          socketId: this.connectedClients.get(lobby.creatorId)?.id,
+          connected: this.connectedClients.get(lobby.creatorId)?.connected,
+          rooms: Array.from(this.connectedClients.get(lobby.creatorId)?.rooms || [])
         },
         timestamp: new Date().toISOString()
       });
@@ -523,21 +522,32 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       
       // Уведомляем обоих игроков о начале игры
+      console.log('📢 [Game Start] Broadcasting gameStart event:', {
+        lobbyId: data.lobbyId,
+        roomMembers: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
+        creator: {
+          id: lobby.creatorId,
+          socketConnected: this.connectedClients.get(lobby.creatorId)?.connected,
+          inGame: this.clientGames.has(lobby.creatorId)
+        },
+        opponent: {
+          id: data.telegramId,
+          socketConnected: client.connected,
+          inGame: this.clientGames.has(data.telegramId)
+        },
+        timestamp: new Date().toISOString()
+      });
+
       this.server.to(data.lobbyId).emit('gameStart', {
         creator: lobby.creatorId,
         opponent: data.telegramId,
         session
       });
 
-      console.log('🚀 Game started:', {
-        sessionId: session.id,
+      console.log('✅ [Game Start] Event broadcast completed:', {
         lobbyId: data.lobbyId,
-        roomSize: this.server.sockets.adapter.rooms.get(data.lobbyId)?.size || 0,
-        timestamp: new Date().toISOString(),
-        creatorSocketId: this.connectedClients.get(lobby.creatorId)?.id,
-        opponentSocketId: client.id,
-        activeConnections: this.connectedClients.size,
-        activeGames: this.clientGames.size
+        deliveredTo: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []).length,
+        timestamp: new Date().toISOString()
       });
 
       return { status: 'joined' };
