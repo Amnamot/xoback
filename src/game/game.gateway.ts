@@ -407,25 +407,43 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     if (lobby.creatorId === data.telegramId) {
-      console.log('👑 Creator joining their own lobby:', {
+      const creatorSocket = this.connectedClients.get(data.telegramId);
+      console.log('👑 [Creator State] Creator joining their own lobby:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
-        timestamp: new Date().toISOString(),
-        socketId: client.id,
-        clientRooms: Array.from(client.rooms)
+        socketState: {
+          connected: creatorSocket?.connected || false,
+          rooms: Array.from(creatorSocket?.rooms || []),
+          handshake: creatorSocket?.handshake?.query || {},
+          transport: creatorSocket?.conn?.transport?.name || 'unknown'
+        },
+        mappings: {
+          inClientGames: this.clientGames.has(data.telegramId),
+          inClientLobbies: this.clientLobbies.has(data.telegramId),
+          inConnectedClients: this.connectedClients.has(data.telegramId)
+        },
+        timestamp: new Date().toISOString()
       });
       client.join(data.lobbyId);
       return { status: 'creator' };
     }
 
     try {
-      console.log('🎲 Creating game session:', {
+      console.log('🎲 [Game Session] Creating game session:', {
         lobbyId: data.lobbyId,
         creatorId: lobby.creatorId,
         opponentId: data.telegramId,
-        timestamp: new Date().toISOString(),
-        socketId: client.id,
-        creatorSocket: this.connectedClients.get(lobby.creatorId)?.id
+        creatorSocket: {
+          exists: this.connectedClients.has(lobby.creatorId),
+          connected: this.connectedClients.get(lobby.creatorId)?.connected || false,
+          rooms: Array.from(this.connectedClients.get(lobby.creatorId)?.rooms || [])
+        },
+        opponentSocket: {
+          exists: this.connectedClients.has(data.telegramId),
+          connected: client.connected,
+          rooms: Array.from(client.rooms)
+        },
+        timestamp: new Date().toISOString()
       });
 
       // Создаем игровую сессию
@@ -439,15 +457,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Очищаем связь с лобби
       this.clientLobbies.delete(lobby.creatorId);
 
-      console.log('✨ Game session created:', {
+      console.log('✅ [Game Session] Session created and room joined:', {
         sessionId: session.id,
         lobbyId: data.lobbyId,
-        creatorId: lobby.creatorId,
-        opponentId: data.telegramId,
-        timestamp: new Date().toISOString(),
-        roomSize: this.server.sockets.adapter.rooms.get(data.lobbyId)?.size || 0,
-        creatorSocketId: this.connectedClients.get(lobby.creatorId)?.id,
-        opponentSocketId: client.id
+        roomMembers: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
+        mappings: {
+          creatorInGames: this.clientGames.has(lobby.creatorId),
+          opponentInGames: this.clientGames.has(data.telegramId),
+          creatorInLobbies: this.clientLobbies.has(lobby.creatorId),
+          opponentInLobbies: this.clientLobbies.has(data.telegramId)
+        },
+        timestamp: new Date().toISOString()
       });
       
       // Проверяем, что создатель в комнате
