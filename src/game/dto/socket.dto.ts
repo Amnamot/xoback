@@ -1,6 +1,5 @@
-import { IsString, IsNumber, IsObject, ValidateNested, IsOptional, IsEnum } from 'class-validator';
+import { IsString, IsNumber, IsObject, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
-import { LobbyStatus, VALID_STATUS_TRANSITIONS } from '../types';
 
 export class ConnectDto {
     @IsString()
@@ -104,21 +103,6 @@ export class TimeExpiredDto {
 export class CreateInviteDto {
     @IsString()
     telegramId: string;
-}
-
-export class UpdateLobbyStatusDto {
-    @IsString()
-    lobbyId: string;
-
-    @IsString()
-    telegramId: string;
-
-    @IsEnum(['active', 'pending', 'wait'])
-    newStatus: LobbyStatus;
-
-    @IsString()
-    @IsOptional()
-    opponentId?: string;
 }
 
 export class CancelLobbyDto {

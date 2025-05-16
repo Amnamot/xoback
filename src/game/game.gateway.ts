@@ -1,18 +1,17 @@
 // src/game/game.gateway.ts v1.0.0
 import { 
   WebSocketGateway, 
-  WebSocketServer,
+  WebSocketServer, 
   SubscribeMessage, 
   OnGatewayConnection,
   OnGatewayDisconnect,
   ConnectedSocket,
   MessageBody
 } from '@nestjs/websockets';
-import { Server } from 'socket.io';
-import { Injectable, Logger, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Server, Socket } from 'socket.io';
+import { Injectable, UsePipes, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GameService } from './game.service';
-import { SocketWithAuth } from './types/socket.types';
 import {
   CreateLobbyDto,
   JoinLobbyDto,
@@ -23,8 +22,7 @@ import {
   JoinGameDto,
   TimeExpiredDto,
   CreateInviteDto,
-  CancelLobbyDto,
-  UpdateLobbyStatusDto
+  CancelLobbyDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -34,20 +32,24 @@ import { Redis } from 'ioredis';
 
 @Injectable()
 @WebSocketGateway({
-  namespace: '/game',
-  cors: {
-    origin: process.env.CORS_ORIGIN?.split(','),
-    credentials: true
+  path: '/socket.io/',
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  allowUpgrades: true,
+  cookie: {
+    name: 'io',
+    httpOnly: true,
+    path: '/'
   }
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer() server: Server;
+  @WebSocketServer()
+  server: Server;
 
-  private readonly logger = new Logger(GameGateway.name);
-  private connectedClients = new Map<string, SocketWithAuth>();
-  private clientGames = new Map<string, string>();
-  private clientLobbies = new Map<string, string>();
-  private reconnectTimeouts = new Map<string, NodeJS.Timeout>();
+  private connectedClients = new Map<string, Socket>();
+  private clientGames = new Map<string, string>(); // telegramId -> gameId
+  private clientLobbies = new Map<string, string>(); // telegramId -> lobbyId
+  private reconnectTimeouts = new Map<string, NodeJS.Timeout>(); // telegramId -> timeout
   private cleanupInterval: NodeJS.Timeout;
 
   constructor(
@@ -56,14 +58,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly httpService: HttpService,
     @InjectRedis() private readonly redis: Redis,
   ) {
-    this.logger.log('GameGateway initialized');
+    console.log('WebSocket URL:', this.configService.get('SOCKET_URL'));
     
+    // Запускаем периодическую очистку неактивных лобби
     this.cleanupInterval = setInterval(async () => {
       try {
         for (const [lobbyId, lobby] of this.gameService.getActiveLobbies()) {
           const exists = await this.gameService.checkLobbyInRedis(lobbyId);
           if (!exists) {
             await this.gameService.deleteLobby(lobbyId);
+            // Очищаем связи
             for (const [telegramId, lid] of this.clientLobbies) {
               if (lid === lobbyId) {
                 this.clientLobbies.delete(telegramId);
@@ -72,307 +76,286 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         }
       } catch (error) {
-        this.logger.error('Cleanup interval error:', error);
+        console.error('Cleanup interval error:', error);
       }
-    }, 30000);
+    }, 30000); // каждые 30 секунд
   }
 
-  async handleConnection(client: SocketWithAuth) {
-    try {
-      const telegramId = client.handshake.query.telegramId as string;
-      
-      // Проверяем наличие telegramId
-      if (!telegramId) {
-        this.logger.error({
-          event: 'connectionError',
-          error: 'No telegramId provided',
-          clientId: client.id,
-          timestamp: new Date().toISOString()
-        });
-        client.disconnect();
-        return;
-      }
-
-      // Устанавливаем telegramId в объект клиента
-      client.telegramId = telegramId;
-      
-      this.logger.log({
-        event: 'clientConnected',
-        clientId: client.id,
-        telegramId,
-        userName: client.userName,
-        timestamp: new Date().toISOString()
-      });
-
-      this.connectedClients.set(telegramId, client);
-
-      // Проверяем и восстанавливаем состояние
-      const disconnectTimeout = this.reconnectTimeouts.get(telegramId);
-      if (disconnectTimeout) {
-        clearTimeout(disconnectTimeout);
-        this.reconnectTimeouts.delete(telegramId);
-        
-        const lobby = await this.gameService.findLobbyByCreator(telegramId);
-        if (lobby && lobby.status === 'pending') {
-          await this.gameService.restoreLobby(lobby.id);
-          const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
-          const ttl = pendingTTL > 0 ? pendingTTL : 30;
-
-          client.join(lobby.id);
-          client.emit('setShowWaitModal', { show: true, ttl });
-          this.server.to(lobby.id).emit('lobbyReady', { 
-            lobbyId: lobby.id,
-            timestamp: Date.now(),
-            ttl
-          });
-
-          this.logger.log({
-            event: 'lobbyRestored',
-            lobbyId: lobby.id,
-            creatorId: telegramId,
-            status: lobby.status,
-            ttl
-          });
-        }
-      }
-
-      // Проверяем активную игру
-      const gameId = this.clientGames.get(telegramId);
-      if (gameId) {
-        await this.handleActiveGame(client, gameId);
-      }
-    } catch (error) {
-      this.logger.error({
-        event: 'connectionError',
-        error: error.message,
-        stack: error.stack,
-        clientId: client.id,
-        timestamp: new Date().toISOString()
-      });
+  async handleConnection(client: Socket) {
+    const telegramId = client.handshake.query.telegramId as string;
+    if (!telegramId) {
       client.disconnect();
+      return;
     }
-  }
 
-  private async handleActiveGame(client: SocketWithAuth, gameId: string) {
-    try {
-      const session = await this.gameService.getGameSession(gameId);
-      if (!session) {
-        const gameResult = await this.gameService.getGameResult(gameId);
-        if (gameResult) {
-          client.emit('showGameResult', {
-            result: gameResult.winner === client.telegramId ? 'win' : 'loss',
-            reason: gameResult.reason,
-            statistics: gameResult.statistics
-          });
-          this.clientGames.delete(client.telegramId);
-        }
-        return;
-      }
+    console.log('👋 Client connected:', {
+      telegramId,
+      socketId: client.id,
+      rooms: Array.from(client.rooms)
+    });
 
-      const currentTime = Date.now();
-      const timeSinceLastMove = currentTime - session.lastMoveTime;
-      const MAX_MOVE_TIME = 30000;
-
-      if (session.currentTurn === client.telegramId && timeSinceLastMove > MAX_MOVE_TIME) {
-        const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-        await this.gameService.endGameSession(gameId, winner, 'timeout_on_reconnect');
+    // Очищаем таймер на удаление лобби, если он есть
+    const disconnectTimeout = this.reconnectTimeouts.get(telegramId);
+    if (disconnectTimeout) {
+      clearTimeout(disconnectTimeout);
+      this.reconnectTimeouts.delete(telegramId);
+      
+      // Проверяем и восстанавливаем лобби
+      const lobby = await this.gameService.findLobbyByCreator(telegramId);
+      if (lobby && lobby.status === 'pending') {
+        await this.gameService.restoreLobby(lobby.id);
         
-        client.emit('showGameResult', {
-          result: 'loss',
-          reason: 'timeout_on_reconnect',
-          statistics: {
-            totalTime: Math.floor((currentTime - session.startedAt) / 1000),
-            moves: session.numMoves,
-            playerTime1: session.playerTime1,
-            playerTime2: session.playerTime2,
-            lastMoveTime: timeSinceLastMove
-          }
+        // Получаем оставшееся время TTL для pending статуса
+        const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
+        const ttl = pendingTTL > 0 ? pendingTTL : 30;
+
+        // Сначала присоединяем клиента к комнате
+        client.join(lobby.id);
+        
+        // Затем отправляем событие показа WaitModal
+        client.emit('setShowWaitModal', {
+          show: true,
+          ttl: ttl
+        });
+        
+        // И только потом отправляем событие о готовности лобби
+        this.server.to(lobby.id).emit('lobbyReady', { 
+          lobbyId: lobby.id,
+          timestamp: Date.now(),
+          ttl: ttl
         });
 
-        this.server.to(gameId).emit('gameEnded', {
-          winner,
-          reason: 'timeout_on_reconnect',
-          statistics: {
-            totalTime: Math.floor((currentTime - session.startedAt) / 1000),
-            moves: session.numMoves,
-            playerTime1: session.playerTime1,
-            playerTime2: session.playerTime2,
-            lastMoveTime: timeSinceLastMove
-          }
-        });
-
-        this.clientGames.delete(session.creatorId);
-        this.clientGames.delete(session.opponentId);
-      } else {
-        client.join(gameId);
-        this.server.to(gameId).emit('playerReconnected', {
-          telegramId: client.telegramId,
-          gameState: {
-            ...session,
-            serverTime: currentTime,
-            timeLeft: Math.max(0, MAX_MOVE_TIME - timeSinceLastMove)
-          }
+        console.log('🔄 Restored lobby and sent ready event:', {
+          lobbyId: lobby.id,
+          creatorId: telegramId,
+          rooms: Array.from(client.rooms),
+          status: lobby.status,
+          pendingTTL: ttl
         });
       }
-    } catch (error) {
-      this.logger.error({
-        event: 'handleActiveGameError',
-        error: error.message,
-        stack: error.stack,
-        gameId,
-        clientId: client.id,
-        timestamp: new Date().toISOString()
-      });
-      this.clientGames.delete(client.telegramId);
     }
-  }
 
-  async handleDisconnect(client: SocketWithAuth) {
-    try {
-      const telegramId = client.telegramId;
-      this.connectedClients.delete(telegramId);
+    this.connectedClients.set(telegramId, client);
+    
+    // Проверяем, есть ли активная игра
+    const gameId = this.clientGames.get(telegramId);
+    if (gameId) {
+      try {
+        const session = await this.gameService.getGameSession(gameId);
+        if (!session) {
+          // Если сессия не найдена, проверяем, не закончилась ли игра
+          const gameResult = await this.gameService.getGameResult(gameId);
+          if (gameResult) {
+            client.emit('showGameResult', {
+              result: gameResult.winner === telegramId ? 'win' : 'loss',
+              reason: gameResult.reason,
+              statistics: gameResult.statistics
+            });
+            // Очищаем связь с игрой
+            this.clientGames.delete(telegramId);
+            return;
+          }
+        } else {
+          const currentTime = Date.now();
+          const timeSinceLastMove = currentTime - session.lastMoveTime;
+          const MAX_MOVE_TIME = 30000; // 30 секунд на ход
 
-      // Обработка активного лобби
-      const lobbyId = this.clientLobbies.get(telegramId);
-      if (lobbyId) {
-        await this.gameService.markLobbyPending(lobbyId);
-        const timeout = setTimeout(async () => {
-          const lobby = await this.gameService.getLobby(lobbyId);
-          if (lobby && lobby.status === 'pending') {
-            await this.gameService.deleteLobby(lobbyId);
-            this.clientLobbies.delete(telegramId);
-            this.server.to(lobbyId).emit('lobbyDeleted', {
-              reason: 'Creator disconnected and did not reconnect'
+          // Если это был ход отключившегося игрока и время истекло
+          if (session.currentTurn === telegramId && timeSinceLastMove > MAX_MOVE_TIME) {
+            // Определяем победителя (противник отключившегося)
+            const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+            
+            // Завершаем игру
+            await this.gameService.endGameSession(gameId, winner, 'timeout_on_reconnect');
+            
+            // Отправляем результат переподключившемуся игроку
+            client.emit('showGameResult', {
+              result: 'loss',
+              reason: 'timeout_on_reconnect',
+              statistics: {
+                totalTime: Math.floor((currentTime - session.startedAt) / 1000),
+                moves: session.numMoves,
+                playerTime1: session.playerTime1,
+                playerTime2: session.playerTime2,
+                lastMoveTime: timeSinceLastMove
+              }
+            });
+
+            // Уведомляем оппонента
+            this.server.to(gameId).emit('gameEnded', {
+              winner,
+              reason: 'timeout_on_reconnect',
+              statistics: {
+                totalTime: Math.floor((currentTime - session.startedAt) / 1000),
+                moves: session.numMoves,
+                playerTime1: session.playerTime1,
+                playerTime2: session.playerTime2,
+                lastMoveTime: timeSinceLastMove
+              }
+            });
+
+            // Очищаем связи с игрой
+            this.clientGames.delete(session.creatorId);
+            this.clientGames.delete(session.opponentId);
+          } else {
+            // Если время не истекло или это не ход отключившегося - продолжаем игру
+            client.join(gameId);
+            this.server.to(gameId).emit('playerReconnected', {
+              telegramId,
+              gameState: {
+                ...session,
+                serverTime: currentTime,
+                timeLeft: Math.max(0, MAX_MOVE_TIME - timeSinceLastMove) // оставшееся время хода
+              }
             });
           }
-        }, 30000);
+        }
+      } catch (error) {
+        console.error('Error reconnecting to game:', error);
+        this.clientGames.delete(telegramId);
+      }
+    }
+  }
+
+  async handleDisconnect(client: Socket) {
+    const telegramId = client.handshake.query.telegramId as string;
+    if (!telegramId) return;
+
+    this.connectedClients.delete(telegramId);
+    
+    // Проверяем наличие активного лобби
+    const lobbyId = this.clientLobbies.get(telegramId);
+    if (lobbyId) {
+      // Помечаем лобби как "в ожидании переподключения"
+      await this.gameService.markLobbyPending(lobbyId);
+      
+      // Устанавливаем таймер на удаление
+      const timeout = setTimeout(async () => {
+        const lobby = await this.gameService.getLobby(lobbyId);
+        if (lobby && lobby.status === 'pending') {
+          // Удаляем лобби только если оно все еще в статусе pending
+          await this.gameService.deleteLobby(lobbyId);
+          this.clientLobbies.delete(telegramId);
+          this.server.to(lobbyId).emit('lobbyDeleted', {
+            reason: 'Creator disconnected and did not reconnect'
+          });
+        }
+      }, 30000); // 30 секунд на переподключение
+
+      this.reconnectTimeouts.set(telegramId, timeout);
+    }
+    
+    // Проверяем, находится ли игрок в активной игре
+    const gameId = this.clientGames.get(telegramId);
+    if (gameId) {
+      const session = await this.gameService.getGameSession(gameId);
+      if (session) {
+        // Уведомляем обоппонента об отключении
+        this.server.to(gameId).emit('playerDisconnected', { telegramId });
+
+        // Устанавливаем таймаут на переподключение
+        const timeout = setTimeout(async () => {
+          // Если игрок не переподключился за 30 секунд, завершаем игру
+          const winnerId = session.creatorId === telegramId ? session.opponentId : session.creatorId;
+          await this.gameService.endGameSession(gameId, winnerId);
+          this.server.to(gameId).emit('gameEnded', {
+            winner: winnerId,
+            reason: 'disconnect'
+          });
+          this.clientGames.delete(telegramId);
+          this.reconnectTimeouts.delete(telegramId);
+        }, 30000); // 30 секунд на переподключение
+
         this.reconnectTimeouts.set(telegramId, timeout);
       }
-
-      // Обработка активной игры
-      const gameId = this.clientGames.get(telegramId);
-      if (gameId) {
-        const session = await this.gameService.getGameSession(gameId);
-        if (session) {
-          this.server.to(gameId).emit('playerDisconnected', { telegramId });
-          const timeout = setTimeout(async () => {
-            const winnerId = session.creatorId === telegramId ? session.opponentId : session.creatorId;
-            await this.gameService.endGameSession(gameId, winnerId);
-            this.server.to(gameId).emit('gameEnded', {
-              winner: winnerId,
-              reason: 'disconnect'
-            });
-            this.clientGames.delete(telegramId);
-            this.reconnectTimeouts.delete(telegramId);
-          }, 30000);
-          this.reconnectTimeouts.set(telegramId, timeout);
-        }
-      }
-
-      this.logger.log({
-        event: 'clientDisconnected',
-        clientId: client.id,
-        telegramId,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      this.logger.error({
-        event: 'disconnectError',
-        error: error.message,
-        stack: error.stack,
-        clientId: client.id,
-        timestamp: new Date().toISOString()
-      });
     }
   }
 
   @SubscribeMessage('createLobby')
+  @UsePipes(new ValidationPipe())
   async handleCreateLobby(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateLobbyDto
   ) {
+    console.log('🎮 Handling createLobby request:', { 
+      telegramId: data.telegramId, 
+      socketId: client.id,
+      rooms: Array.from(client.rooms),
+      adapter: this.server.sockets.adapter.rooms.size
+    });
+    
     try {
-      // Проверяем telegramId из запроса и сокета
-      const telegramId = data.telegramId || client.telegramId;
+      // Создание лобби через GameService
+      const lobby = await this.gameService.createLobby(data.telegramId);
       
-      if (!telegramId) {
-        throw new Error('TelegramId not provided');
-      }
-
-      this.logger.log({
-        event: 'createLobbyStarted',
-        clientId: client.id,
-        telegramId,
-        timestamp: new Date().toISOString()
-      });
-
-      // Проверяем существующие лобби для этого пользователя
-      const existingLobby = await this.gameService.findLobbyByCreator(telegramId);
-      if (existingLobby) {
-        this.logger.warn({
-          event: 'duplicateLobbyAttempt',
-          clientId: client.id,
-          telegramId,
-          existingLobbyId: existingLobby.id,
-          timestamp: new Date().toISOString()
-        });
+      if (!lobby) {
+        console.warn('⚠️ Lobby creation returned null');
         return { 
           status: 'error',
-          message: 'You already have an active lobby',
+          message: 'Failed to create lobby: null response',
           timestamp: Date.now()
         };
       }
-
-      const lobby = await this.gameService.createLobby(telegramId);
-      if (!lobby) {
-        throw new Error('Failed to create lobby');
-      }
-
-      this.clientLobbies.set(telegramId, lobby.id);
+      
+      console.log('✅ Lobby created:', { 
+        lobbyId: lobby.id, 
+        creatorId: data.telegramId,
+        status: lobby.status
+      });
+      
+      // Сохраняем связь клиент-лобби
+      this.clientLobbies.set(data.telegramId, lobby.id);
+      console.log('🔗 Client-lobby association saved:', { 
+        telegramId: data.telegramId, 
+        lobbyId: lobby.id,
+        mappingSize: this.clientLobbies.size
+      });
+      
+      // Добавляем клиента в комнату лобби
       client.join(lobby.id);
-
+      console.log('👥 Client joined lobby room:', { 
+        socketId: client.id, 
+        lobbyId: lobby.id,
+        updatedRooms: Array.from(client.rooms)
+      });
+      
+      // Отправляем событие о готовности лобби
       this.server.to(lobby.id).emit('lobbyReady', { 
         lobbyId: lobby.id,
         timestamp: Date.now()
       });
-
+      console.log('📢 Lobby ready event emitted:', { 
+        lobbyId: lobby.id,
+        roomSize: this.server.sockets.adapter.rooms.get(lobby.id)?.size || 0,
+        activeConnections: this.server.sockets.sockets.size
+      });
+      
       return { 
         status: 'created', 
         lobbyId: lobby.id,
         timestamp: Date.now()
       };
     } catch (error) {
-      this.logger.error({
-        event: 'createLobbyError',
-        error: error.message,
-        stack: error.stack,
-        clientId: client.id,
-        telegramId: data.telegramId,
-        timestamp: new Date().toISOString()
-      });
-
+      console.error('❌ Error in handleCreateLobby:', error);
+      
+      // Очищаем связи при ошибке
       this.clientLobbies.delete(data.telegramId);
+      console.log('🧹 Cleaned up client-lobby association for:', data.telegramId);
+      
       return { 
         status: 'error',
-        message: error.message,
+        message: error instanceof Error ? error.message : 'Failed to create lobby',
         timestamp: Date.now()
       };
     }
   }
 
   @SubscribeMessage('joinLobby')
+  @UsePipes(new ValidationPipe())
   async handleJoinLobby(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinLobbyDto
   ) {
-    this.logger.log({
-      event: 'joinLobbyStarted',
-      clientId: client.id,
-      telegramId: data.telegramId,
-      lobbyId: data.lobbyId,
-      timestamp: new Date().toISOString()
-    });
-
     console.log('🎮 Handling joinLobby request:', {
       lobbyId: data.lobbyId,
       telegramId: data.telegramId,
@@ -494,14 +477,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         activeGames: this.clientGames.size
       });
 
-      this.logger.log({
-        event: 'lobbyJoined',
-        clientId: client.id,
-        telegramId: data.telegramId,
-        lobbyId: data.lobbyId,
-        timestamp: new Date().toISOString()
-      });
-
       return { status: 'joined' };
     } catch (error) {
       console.error('❌ Error joining lobby:', {
@@ -514,16 +489,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         clientRooms: Array.from(client.rooms)
       });
       
-      this.logger.error({
-        event: 'joinLobbyError',
-        clientId: client.id,
-        telegramId: data.telegramId,
-        lobbyId: data.lobbyId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        timestamp: new Date().toISOString()
-      });
-      
       return {
         status: 'error',
         errorType: 'join_failed',
@@ -533,149 +498,81 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('makeMove')
+  @UsePipes(new ValidationPipe())
   async handleMove(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: MakeMoveDto
   ) {
-    const startTime = Date.now();
-    const telegramId = client.telegramId;
-
-    this.logger.log({
-      event: 'makeMoveStarted',
-      clientId: client.id,
-      telegramId,
-      gameId: data.gameId,
-      position: data.position,
-      player: data.player,
-      moveTime: data.moveTime,
-      timestamp: new Date().toISOString()
-    });
-
-    console.log('🎯 Handling move request', {
-      gameId: data.gameId,
-      telegramId,
-      position: data.position,
-      player: data.player,
-      moveTime: data.moveTime,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      const session = this.gameService.getGameSession(data.gameId);
-      if (!session) {
-        console.error('❌ Game session not found for move', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Проверяем, что это ход нужного игрока
-      if (session.currentTurn !== telegramId) {
-        console.warn('⚠️ Invalid turn attempt', {
-          gameId: data.gameId,
-          expectedPlayer: session.currentTurn,
-          actualPlayer: telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Проверяем время хода
-      const timeSinceLastMove = Date.now() - session.lastMoveTime;
-      if (timeSinceLastMove > 30000) { // 30 секунд
-        console.warn('⚠️ Move time expired', {
-          gameId: data.gameId,
-          telegramId,
-          timeSinceLastMove,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Определяем победителя (противник текущего игрока)
-        const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-        await this.gameService.endGameSession(data.gameId, winner, 'timeout');
-        
-        this.server.to(data.gameId).emit('gameEnded', {
-          winner,
-          reason: 'timeout',
-          statistics: {
-            totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
-            moves: session.numMoves,
-            playerTime1: session.playerTime1,
-            playerTime2: session.playerTime2,
-            lastMoveTime: timeSinceLastMove
-          }
-        });
-        return;
-      }
-
-      // Обновляем состояние игры
-      const nextTurn = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-      const updatedSession = await this.gameService.updateGameSession(data.gameId, {
-        currentTurn: nextTurn,
-        lastMoveTime: Date.now(),
-        numMoves: session.numMoves + 1,
-        playerTime1: session.currentTurn === session.creatorId ? session.playerTime1 + data.moveTime : session.playerTime1,
-        playerTime2: session.currentTurn === session.opponentId ? session.playerTime2 + data.moveTime : session.playerTime2
-      });
-
-      // Отправляем ход всем игрокам
-      this.server.to(data.gameId).emit('moveMade', {
-        position: data.position,
-        player: data.player,
-        gameState: {
-          currentTurn: updatedSession.currentTurn,
-          playerTime1: updatedSession.playerTime1,
-          playerTime2: updatedSession.playerTime2,
-          serverTime: Date.now(),
-          moveStartTime: updatedSession.lastMoveTime,
-          gameStartTime: updatedSession.startedAt
-        },
-        moveId: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      });
-
-      console.log('✅ Move processed successfully', {
-        gameId: data.gameId,
-        telegramId,
-        nextTurn,
-        processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
-      });
-
-      this.logger.log({
-        event: 'moveCompleted',
-        clientId: client.id,
-        telegramId,
-        gameId: data.gameId,
-        position: data.position,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('❌ Error processing move:', {
-        gameId: data.gameId,
-        telegramId,
-        error: error.stack,
-        processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
-      });
-
-      this.logger.error({
-        event: 'makeMoveError',
-        clientId: client.id,
-        telegramId,
-        gameId: data.gameId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        timestamp: new Date().toISOString()
-      });
+    const session = await this.gameService.getGameSession(data.gameId);
+    
+    if (!session) {
+      return { status: 'error', message: 'Game session not found' };
     }
+
+    const currentTime = Date.now();
+    const timeSinceLastMove = currentTime - session.lastMoveTime;
+    const MAX_MOVE_TIME = 30000;
+
+    if (timeSinceLastMove > MAX_MOVE_TIME) {
+      const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
+      
+      await this.gameService.endGameSession(data.gameId, winner);
+      
+      this.server.to(data.gameId).emit('gameEnded', {
+        winner,
+        reason: 'timeout',
+        statistics: {
+          totalTime: Math.floor((currentTime - session.startedAt) / 1000),
+          moves: session.numMoves,
+          playerTime1: session.playerTime1,
+          playerTime2: session.playerTime2,
+          lastMoveTime: timeSinceLastMove
+        }
+      });
+
+      this.clientGames.delete(session.creatorId);
+      this.clientGames.delete(session.opponentId);
+
+      return { status: 'error', message: 'Move time expired' };
+    }
+
+    const isCreator = data.player === session.creatorId;
+
+    if (data.player !== session.currentTurn) {
+      return { status: 'error', message: 'Not your turn' };
+    }
+
+    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
+      playerTime1: isCreator ? session.playerTime1 + data.moveTime : session.playerTime1,
+      playerTime2: !isCreator ? session.playerTime2 + data.moveTime : session.playerTime2,
+      lastMoveTime: currentTime,
+      currentTurn: isCreator ? session.opponentId : session.creatorId,
+      numMoves: session.numMoves + 1
+    });
+
+    this.server.to(data.gameId).emit('moveMade', {
+      moveId: `move_${currentTime}`,
+      position: data.position,
+      player: data.player,
+      gameState: {
+        currentTurn: updatedSession.currentTurn,
+        playerTime1: updatedSession.playerTime1,
+        playerTime2: updatedSession.playerTime2,
+        numMoves: updatedSession.numMoves,
+        serverTime: currentTime,
+        moveStartTime: currentTime,
+        gameStartTime: session.startedAt,
+        timeLeft: MAX_MOVE_TIME
+      }
+    });
+
+    return { status: 'success' };
   }
 
   @SubscribeMessage('updatePlayerTime')
   @UsePipes(new ValidationPipe())
   async handleTimeUpdate(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: UpdatePlayerTimeDto
   ) {
     const session = await this.gameService.getGameSession(data.gameId);
@@ -700,7 +597,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('gameOver')
   @UsePipes(new ValidationPipe())
   async handleGameOver(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: GameOverDto
   ) {
     await this.gameService.endGameSession(data.gameId, data.winner);
@@ -716,7 +613,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('joinGame')
   @UsePipes(new ValidationPipe())
   async handleJoinGame(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinGameDto
   ) {
     this.clientGames.set(data.telegramId, data.gameId);
@@ -726,88 +623,39 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('timeExpired')
+  @UsePipes(new ValidationPipe())
   async handleTimeExpired(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: TimeExpiredDto
   ) {
-    const startTime = Date.now();
-    const telegramId = client.telegramId;
+    const session = await this.gameService.getGameSession(data.gameId);
+    
+    if (!session) {
+      return { status: 'error', message: 'Game session not found' };
+    }
 
-    console.log('⏰ Handling time expired event', {
-      gameId: data.gameId,
-      telegramId,
-      player: data.player,
-      timestamp: new Date().toISOString()
+    const winner = data.player === session.creatorId ? session.opponentId : session.creatorId;
+
+    await this.gameService.endGameSession(data.gameId, winner);
+
+    this.server.to(data.gameId).emit('gameEnded', {
+      winner,
+      reason: 'timeout',
+      statistics: {
+        totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
+        moves: session.numMoves,
+        playerTime1: session.playerTime1,
+        playerTime2: session.playerTime2
+      }
     });
 
-    try {
-      const session = this.gameService.getGameSession(data.gameId);
-      if (!session) {
-        console.error('❌ Game session not found for time expired event', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Проверяем, что время действительно истекло
-      const timeSinceLastMove = Date.now() - session.lastMoveTime;
-      if (timeSinceLastMove <= 30000) { // 30 секунд
-        console.warn('⚠️ Invalid time expired event - time not actually expired', {
-          gameId: data.gameId,
-          telegramId,
-          timeSinceLastMove,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Определяем победителя (противник текущего игрока)
-      const winner = session.currentTurn === session.creatorId ? session.opponentId : session.creatorId;
-      
-      console.log('🏁 Ending game due to time expiration', {
-        gameId: data.gameId,
-        winner,
-        loser: session.currentTurn,
-        timeSinceLastMove,
-        timestamp: new Date().toISOString()
-      });
-
-      await this.gameService.endGameSession(data.gameId, winner, 'timeout');
-      
-      this.server.to(data.gameId).emit('gameEnded', {
-        winner,
-        reason: 'timeout',
-        statistics: {
-          totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
-          moves: session.numMoves,
-          playerTime1: session.playerTime1,
-          playerTime2: session.playerTime2,
-          lastMoveTime: timeSinceLastMove
-        }
-      });
-
-      console.log('✅ Time expired event handled successfully', {
-        gameId: data.gameId,
-        processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('❌ Error handling time expired event:', {
-        gameId: data.gameId,
-        telegramId,
-        error: error.stack,
-        processingTime: Date.now() - startTime,
-        timestamp: new Date().toISOString()
-      });
-    }
+    return { status: 'success' };
   }
 
   @SubscribeMessage('createInvite')
   @UsePipes(new ValidationPipe())
   async handleCreateInvite(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateInviteDto
   ) {
     console.log('🔍 Creating invite for telegramId:', data.telegramId);
@@ -827,21 +675,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const result = {
         type: "article",
         id: randomBytes(5).toString("hex"),
-        title: "Invitation to the game! ⚔️",
-        description: "Click to accept the challenge!",
+        title: "Invitation to the game!",
+        description: "Click to accept the call!",
         input_message_content: {
-          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe!`,
-          parse_mode: "HTML"
+          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe`,
         },
         reply_markup: {
-          inline_keyboard: [[{
-            text: "⚔️ Accept the battle 🛡",
-            url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
-          }]]
+          inline_keyboard: [[
+            {
+              text: "⚔️ Accept the battle 🛡",
+              url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+            }
+          ]]
         },
-        thumbnail_url: "https://igra.top/media/inviteImg.png",
+        thumbnail_url: "https://brown-real-meerkat-526.mypinata.cloud/ipfs/bafkreihszmccida3akvw4oshrwcixy5xnpimxiprjrnqo5aevzshj4foda",
         thumbnail_width: 300,
-        thumbnail_height: 300
+        thumbnail_height: 300,
       };
 
       console.log('📤 Preparing Telegram API request:', {
@@ -856,55 +705,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       
       console.log('🔗 Telegram API URL (without token):', url.replace(BOT_TOKEN, 'BOT_TOKEN'));
 
-      // Добавляем обработку таймаутов и повторных попыток
-      const maxRetries = 3;
-      let retryCount = 0;
-      let lastError = null;
-
-      while (retryCount < maxRetries) {
-        try {
-          const { data: response } = await firstValueFrom(
-            this.httpService.get(url, { 
-              timeout: 5000,
-              headers: {
-                'User-Agent': 'TicTacToe-Bot/1.0'
-              }
-            })
-          );
-          
-          console.log('📨 Telegram API response:', {
-            response,
-            attempt: retryCount + 1,
-            timestamp: new Date().toISOString()
-          });
-
-          return { 
-            messageId: response.result.id, 
-            lobbyId: lobby.id 
-          };
-        } catch (error) {
-          lastError = error;
-          retryCount++;
-          
-          console.warn(`❌ Attempt ${retryCount}/${maxRetries} failed:`, {
-            error: error.message,
-            code: error.code,
-            timestamp: new Date().toISOString()
-          });
-
-          if (retryCount < maxRetries) {
-            // Экспоненциальная задержка перед следующей попыткой
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
-          }
-        }
-      }
-
-      console.error('❌ All retry attempts failed:', {
-        error: lastError?.message,
-        lobbyId: lobby.id,
+      const { data: response } = await firstValueFrom(this.httpService.get(url));
+      
+      console.log('📨 Telegram API response:', {
+        response,
         timestamp: new Date().toISOString()
       });
-      return { error: 'Failed to create invite' };
+
+      return { 
+        messageId: response.result.id, 
+        lobbyId: lobby.id 
+      };
     } catch (error) {
       console.error('❌ Error creating invite:', error);
       return { error: 'Failed to create invite' };
@@ -914,7 +725,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('cancelLobby')
   @UsePipes(new ValidationPipe())
   async handleCancelLobby(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: CancelLobbyDto
   ) {
     console.log('🔄 Handling cancelLobby request:', {
@@ -1000,70 +811,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  @SubscribeMessage('updateViewport')
-  async handleViewportUpdate(
-    @ConnectedSocket() client: SocketWithAuth,
-    @MessageBody() data: UpdateViewportDto
-  ) {
-    const telegramId = client.telegramId;
-
-    console.log('🔄 Handling viewport update', {
-      gameId: data.gameId,
-      telegramId,
-      viewport: data.viewport,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      const session = this.gameService.getGameSession(data.gameId);
-      if (!session) {
-        console.warn('⚠️ Game session not found for viewport update', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Отправляем обновление всем игрокам, кроме отправителя
-      client.to(data.gameId).emit('viewportUpdated', {
-        telegramId,
-        viewport: data.viewport
-      });
-
-      console.log('✅ Viewport update broadcasted', {
-        gameId: data.gameId,
-        telegramId,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('❌ Error updating viewport:', {
-        gameId: data.gameId,
-        telegramId,
-        error: error.stack,
-        timestamp: new Date().toISOString()
-      });
-    }
-  }
-
   @SubscribeMessage('uiState')
   async handleUiState(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
   ) {
-    this.logger.log({
-      event: 'uiStateUpdate',
-      clientId: client.id,
+    const states: Record<string, string> = {
+      'loader': '⌛ User on Loader screen',
+      'startScreen': '🎮 User on Start screen',
+      'waitModal': '⏳ WaitModal is shown',
+      'loss': '❌ User on Loss screen',
+      'appClosed': '👋 User closed the app'
+    };
+
+    console.log(`${states[data.state] || '🔄 UI State change'}:`, {
       telegramId: data.telegramId,
+      socketId: client.id,
       state: data.state,
-      details: data.details,
-      timestamp: new Date().toISOString()
+      ...(data.details && { details: data.details })
     });
   }
 
   @SubscribeMessage('checkActiveLobby')
   async handleCheckActiveLobby(
-    @ConnectedSocket() client: SocketWithAuth,
+    @ConnectedSocket() client: Socket,
     @MessageBody() data: { telegramId: string }
   ) {
     try {
@@ -1084,61 +855,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       console.error('Error checking active lobby:', error);
       return { error: 'Failed to check active lobby' };
-    }
-  }
-
-  @SubscribeMessage('updateLobbyStatus')
-  @UsePipes(new ValidationPipe())
-  async handleUpdateLobbyStatus(
-    @ConnectedSocket() client: SocketWithAuth,
-    @MessageBody() data: UpdateLobbyStatusDto
-  ) {
-    console.log('🔄 Handling lobby status update:', {
-      telegramId: data.telegramId,
-      lobbyId: data.lobbyId,
-      newStatus: data.newStatus,
-      socketId: client.id,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      const updatedLobby = await this.gameService.updateLobbyStatus(
-        data.lobbyId,
-        data.newStatus,
-        data.telegramId
-      );
-
-      // Оповещаем всех участников лобби
-      this.server.to(data.lobbyId).emit('lobbyStatusUpdated', {
-        lobbyId: data.lobbyId,
-        status: data.newStatus,
-        opponentId: data.opponentId,
-        timestamp: Date.now()
-      });
-
-      console.log('✅ Lobby status update handled:', {
-        lobbyId: data.lobbyId,
-        newStatus: data.newStatus,
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        status: 'updated',
-        lobby: updatedLobby,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      console.error('❌ Error handling lobby status update:', {
-        error: error.message,
-        lobbyId: data.lobbyId,
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        status: 'error',
-        message: error.message,
-        timestamp: Date.now()
-      };
     }
   }
 
