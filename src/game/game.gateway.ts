@@ -115,14 +115,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Затем отправляем событие показа WaitModal
         client.emit('setShowWaitModal', {
           show: true,
-          ttl: ttl
+          ttl: ttl,
+          creatorMarker: '👑'
         });
         
         // И только потом отправляем событие о готовности лобби
         this.server.to(lobby.id).emit('lobbyReady', { 
           lobbyId: lobby.id,
           timestamp: Date.now(),
-          ttl: ttl
+          ttl: ttl,
+          creatorMarker: '👑'
         });
 
         console.log('🔄 Restored lobby and sent ready event:', {
