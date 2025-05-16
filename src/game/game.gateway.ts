@@ -1,4 +1,4 @@
-// src/game/game.gateway.ts v1.0.0
+// src/game/game.gateway.ts v1.0.1
 import { 
   WebSocketGateway, 
   WebSocketServer, 
