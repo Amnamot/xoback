@@ -1,4 +1,4 @@
-// src/game/game.gateway.ts v1.0.1
+// src/game/game.gateway.ts v1.0.2
 import { 
   WebSocketGateway, 
   WebSocketServer, 
@@ -109,6 +109,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
         const ttl = pendingTTL > 0 ? pendingTTL : 30;
 
+        console.log('👑 [Creator Reconnect] Sending creator marker:', {
+          lobbyId: lobby.id,
+          creatorId: telegramId,
+          socketId: client.id,
+          timestamp: new Date().toISOString()
+        });
+
         // Сначала присоединяем клиента к комнате
         client.join(lobby.id);
         
@@ -127,12 +134,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           creatorMarker: '👑'
         });
 
-        console.log('🔄 Restored lobby and sent ready event:', {
+        console.log('✅ [Creator Reconnect] Sent creator marker and ready event:', {
           lobbyId: lobby.id,
           creatorId: telegramId,
-          rooms: Array.from(client.rooms),
-          status: lobby.status,
-          pendingTTL: ttl
+          socketId: client.id,
+          timestamp: new Date().toISOString()
         });
       }
     }
@@ -315,12 +321,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Отправляем событие о готовности лобби
       this.server.to(lobby.id).emit('lobbyReady', { 
         lobbyId: lobby.id,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        creatorMarker: '👑'
       });
-      console.log('📢 Lobby ready event emitted:', { 
+      console.log('👑 [Create Lobby] Sent creator marker:', {
         lobbyId: lobby.id,
-        roomSize: this.server.sockets.adapter.rooms.get(lobby.id)?.size || 0,
-        activeConnections: this.server.sockets.sockets.size
+        creatorId: data.telegramId,
+        socketId: client.id,
+        timestamp: new Date().toISOString()
       });
       
       return { 
