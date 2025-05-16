@@ -451,21 +451,49 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(data.lobbyId);
       
       // Сохраняем связь игроков с игрой
+      console.log('🔄 [Game Session] Saving player-game associations:', {
+        creator: {
+          id: lobby.creatorId,
+          socketExists: this.connectedClients.has(lobby.creatorId),
+          socketConnected: this.connectedClients.get(lobby.creatorId)?.connected,
+          inGames: this.clientGames.has(lobby.creatorId),
+          inLobbies: this.clientLobbies.has(lobby.creatorId),
+          rooms: Array.from(this.connectedClients.get(lobby.creatorId)?.rooms || [])
+        },
+        opponent: {
+          id: data.telegramId,
+          socketExists: this.connectedClients.has(data.telegramId),
+          socketConnected: client.connected,
+          inGames: this.clientGames.has(data.telegramId),
+          inLobbies: this.clientLobbies.has(data.telegramId),
+          rooms: Array.from(client.rooms)
+        },
+        session: {
+          id: session.id,
+          lobbyId: data.lobbyId
+        },
+        timestamp: new Date().toISOString()
+      });
+
       this.clientGames.set(lobby.creatorId, data.lobbyId);
       this.clientGames.set(data.telegramId, data.lobbyId);
-      
+
       // Очищаем связь с лобби
       this.clientLobbies.delete(lobby.creatorId);
 
-      console.log('✅ [Game Session] Session created and room joined:', {
-        sessionId: session.id,
-        lobbyId: data.lobbyId,
-        roomMembers: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
-        mappings: {
-          creatorInGames: this.clientGames.has(lobby.creatorId),
-          opponentInGames: this.clientGames.has(data.telegramId),
-          creatorInLobbies: this.clientLobbies.has(lobby.creatorId),
-          opponentInLobbies: this.clientLobbies.has(data.telegramId)
+      // Проверяем состояние после обновления маппингов
+      console.log('✅ [Game Session] Mappings updated:', {
+        creator: {
+          id: lobby.creatorId,
+          inGames: this.clientGames.has(lobby.creatorId),
+          inLobbies: this.clientLobbies.has(lobby.creatorId),
+          gameId: this.clientGames.get(lobby.creatorId)
+        },
+        opponent: {
+          id: data.telegramId,
+          inGames: this.clientGames.has(data.telegramId),
+          inLobbies: this.clientLobbies.has(data.telegramId),
+          gameId: this.clientGames.get(data.telegramId)
         },
         timestamp: new Date().toISOString()
       });
