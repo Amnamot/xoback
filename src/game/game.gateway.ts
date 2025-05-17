@@ -41,7 +41,7 @@ interface PlayerData {
 interface LobbyData {
   creatorId: string;
   opponentId?: string;
-  status: 'pending' | 'active';
+  status: 'pending' | 'active' | 'closed';
 }
 
 interface GameData {
@@ -198,12 +198,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             timestamp: new Date().toISOString()
           });
 
-          if (gameData) {
-            // Если есть активная игра - подключаем к ней
+          if (gameData || lobbyData.status === 'closed') {
+            // Если есть активная игра или лобби в статусе 'closed' - подключаем к игре
             console.log('🎯 [State Restore] Restoring active game:', {
               lobbyId: playerData.lobbyId,
               playerRole: playerData.role,
-              isCurrentTurn: gameData.currentTurn === telegramId,
+              lobbyStatus: lobbyData.status,
+              hasGameData: Boolean(gameData),
+              isCurrentTurn: gameData?.currentTurn === telegramId,
               timestamp: new Date().toISOString()
             });
 
@@ -215,14 +217,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`lobby:${playerData.lobbyId}`);
             await this.updateTTL(`game:${playerData.lobbyId}`);
 
-            const currentPlayer = gameData.currentTurn === telegramId ? 
-              (playerData.role === 'creator' ? 'X' : 'O') : 
-              (playerData.role === 'creator' ? 'O' : 'X');
-
             // Отправляем текущее состояние игры
             client.emit('gameState', {
               board: gameData.board,
-              currentPlayer,
+              currentPlayer: gameData.currentTurn === telegramId ? 
+                (playerData.role === 'creator' ? 'X' : 'O') : 
+                (playerData.role === 'creator' ? 'O' : 'X'),
               scale: 1,
               position: { x: 0, y: 0 },
               time: 0,
@@ -232,14 +232,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             console.log('✅ [State Restore] Game state sent:', {
               telegramId,
               lobbyId: playerData.lobbyId,
-              currentPlayer,
+              currentPlayer: gameData.currentTurn === telegramId,
               timestamp: new Date().toISOString()
             });
-          } else if (playerData.inviteSent) {
-            // Если инвайт был отправлен - восстанавливаем лобби
+          } else if (playerData.inviteSent || lobbyData.status === 'pending') {
+            // Восстанавливаем лобби для создателя с отправленным инвайтом
             console.log('📨 [Reconnect] Restoring lobby after invite:', {
               telegramId,
               lobbyId: playerData.lobbyId,
+              inviteSent: playerData.inviteSent,
+              lobbyStatus: lobbyData.status,
               timestamp: new Date().toISOString()
             });
 
@@ -379,7 +381,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       await this.saveToRedis(`lobby:${lobby.id}`, {
         creatorId: data.telegramId,
-        status: 'pending'
+        status: 'active'
       });
       
       // Сохраняем связь клиент-лобби
@@ -590,7 +592,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const updatedLobbyData = {
       ...lobbyData,
       opponentId: data.telegramId,
-      status: 'active'
+      status: 'closed'
     };
     await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
 
@@ -927,7 +929,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Обновляем данные лобби
       await this.saveToRedis(`lobby:${lobby.id}`, {
         creatorId: data.telegramId,
-        status: 'pending',
+        status: lobby.status,
         inviteSent: true,
         lastAction: 'invite_sent',
         timestamp: Date.now()
@@ -963,7 +965,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('🎯 [Invite] Lobby state after invite:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
-        lobbyStatus: 'pending',
+        lobbyStatus: lobby.status,
         creatorMarker: '❌',
         redisKeys: {
           player: `player:${data.telegramId}`,
