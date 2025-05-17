@@ -455,89 +455,89 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
 
-      // Создаем игровую сессию
-      const session = await this.gameService.createGameSession(data.lobbyId, data.telegramId);
-      client.join(data.lobbyId);
+      // Создаем игровую сессию без удаления лобби
+      const session = await this.gameService.createGameSession(data.lobbyId, data.telegramId, false);
       
-      // Сохраняем связь игроков с игрой
-      console.log('🔄 [Game Session] Saving player-game associations:', {
-        creator: {
-          id: lobby.creatorId,
-          socketExists: this.connectedClients.has(lobby.creatorId),
-          socketConnected: this.connectedClients.get(lobby.creatorId)?.connected,
-          inGames: this.clientGames.has(lobby.creatorId),
-          inLobbies: this.clientLobbies.has(lobby.creatorId),
-          rooms: Array.from(this.connectedClients.get(lobby.creatorId)?.rooms || [])
-        },
-        opponent: {
-          id: data.telegramId,
-          socketExists: this.connectedClients.has(data.telegramId),
-          socketConnected: client.connected,
-          inGames: this.clientGames.has(data.telegramId),
-          inLobbies: this.clientLobbies.has(data.telegramId),
-          rooms: Array.from(client.rooms)
-        },
-        session: {
-          id: session.id,
-          lobbyId: data.lobbyId
-        },
+      // 1. Подключаем приглашенного игрока
+      client.join(data.lobbyId);
+      console.log('✅ [Game Join] Opponent joined room:', {
+        lobbyId: data.lobbyId,
+        opponentId: data.telegramId,
+        socketId: client.id,
+        timestamp: new Date().toISOString()
+      });
+      
+      // 2. Проверяем и подключаем создателя
+      const creatorSocket = this.connectedClients.get(lobby.creatorId);
+      if (!creatorSocket || !creatorSocket.connected) {
+        console.error('❌ [Game Join] Creator not connected:', {
+          lobbyId: data.lobbyId,
+          creatorId: lobby.creatorId,
+          socketExists: !!creatorSocket,
+          connected: creatorSocket?.connected,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Очищаем подключение приглашенного
+        client.leave(data.lobbyId);
+        return {
+          status: 'error',
+          errorType: 'creator_not_connected',
+          message: 'Game creator is not connected. Please try again later.'
+        };
+      }
+
+      // Подключаем создателя к игровой комнате
+      creatorSocket.join(data.lobbyId);
+      console.log('✅ [Game Join] Creator joined room:', {
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        socketId: creatorSocket.id,
         timestamp: new Date().toISOString()
       });
 
+      // 3. Проверяем, что оба игрока действительно в комнате
+      const roomMembers = Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []);
+      console.log('👥 [Game Join] Room members check:', {
+        lobbyId: data.lobbyId,
+        members: roomMembers,
+        creatorSocketId: creatorSocket.id,
+        opponentSocketId: client.id,
+        timestamp: new Date().toISOString()
+      });
+
+      const bothPlayersConnected = roomMembers.length === 2;
+      
+      if (!bothPlayersConnected) {
+        console.error('❌ [Game Join] Not all players connected:', {
+          lobbyId: data.lobbyId,
+          membersCount: roomMembers.length,
+          expected: 2,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Очищаем подключения
+        client.leave(data.lobbyId);
+        creatorSocket.leave(data.lobbyId);
+        
+        return {
+          status: 'error',
+          errorType: 'connection_failed',
+          message: 'Failed to connect all players to the game. Please try again.'
+        };
+      }
+
+      // 4. Оба игрока успешно подключены - сохраняем связи с игрой
       this.clientGames.set(lobby.creatorId, data.lobbyId);
       this.clientGames.set(data.telegramId, data.lobbyId);
 
-      // Очищаем связь с лобби
-      this.clientLobbies.delete(lobby.creatorId);
-
-      // Проверяем состояние после обновления маппингов
-      console.log('✅ [Game Session] Mappings updated:', {
-        creator: {
-          id: lobby.creatorId,
-          inGames: this.clientGames.has(lobby.creatorId),
-          inLobbies: this.clientLobbies.has(lobby.creatorId),
-          gameId: this.clientGames.get(lobby.creatorId)
-        },
-        opponent: {
-          id: data.telegramId,
-          inGames: this.clientGames.has(data.telegramId),
-          inLobbies: this.clientLobbies.has(data.telegramId),
-          gameId: this.clientGames.get(data.telegramId)
-        },
-        timestamp: new Date().toISOString()
-      });
-      
-      // Проверяем, что создатель в комнате
-      const creatorSocket = this.connectedClients.get(lobby.creatorId);
-      if (creatorSocket) {
-        console.log('🔄 Joining creator to game room:', {
-          lobbyId: data.lobbyId,
-          creatorId: lobby.creatorId,
-          socketId: creatorSocket.id
-        });
-        
-        // Явно присоединяем создателя к игровой комнате
-        creatorSocket.join(data.lobbyId);
-        
-        // Обновляем связь создателя с игрой
-        this.clientGames.set(lobby.creatorId, data.lobbyId);
-      }
-
-      // Проверяем состав комнаты после всех операций
-      console.log('👥 Room members before gameStart:', {
-        lobbyId: data.lobbyId,
-        members: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
-        creatorSocketId: creatorSocket?.id,
-        opponentSocketId: client.id
-      });
-      
-      // Уведомляем обоих игроков о начале игры
+      // 5. Отправляем событие начала игры
       console.log('📢 [Game Start] Broadcasting gameStart event:', {
         lobbyId: data.lobbyId,
-        roomMembers: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
+        roomMembers: roomMembers,
         creator: {
           id: lobby.creatorId,
-          socketConnected: this.connectedClients.get(lobby.creatorId)?.connected,
+          socketConnected: creatorSocket.connected,
           inGame: this.clientGames.has(lobby.creatorId)
         },
         opponent: {
@@ -554,9 +554,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         session
       });
 
-      console.log('✅ [Game Start] Event broadcast completed:', {
+      // 6. Отправляем начальное состояние игры
+      this.server.to(data.lobbyId).emit('gameState', {
+        board: session.board,
+        currentPlayer: 'O', // Первый ход всегда за O
+        scale: 1,
+        position: { x: 0, y: 0 },
+        time: 0,
+        playerTime1: session.playerTime1,
+        playerTime2: session.playerTime2,
+        gameSession: session
+      });
+
+      // 7. Только теперь, когда все проверки пройдены и игроки подключены, удаляем лобби
+      await this.gameService.deleteLobby(data.lobbyId);
+      this.clientLobbies.delete(lobby.creatorId);
+
+      console.log('✅ [Game Start] Game successfully initialized:', {
         lobbyId: data.lobbyId,
-        deliveredTo: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []).length,
+        creatorId: lobby.creatorId,
+        opponentId: data.telegramId,
+        connectedPlayers: roomMembers.length,
         timestamp: new Date().toISOString()
       });
 
