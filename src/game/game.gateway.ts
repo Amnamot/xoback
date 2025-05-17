@@ -139,15 +139,28 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    console.log('👋 Client connected:', {
+    console.log('🔌 [Connection] New client connection attempt:', {
       telegramId,
       socketId: client.id,
-      rooms: Array.from(client.rooms)
+      timestamp: new Date().toISOString(),
+      connectionType: client.conn.transport.name,
+      query: client.handshake.query,
+      existingSocket: this.connectedClients.has(telegramId)
     });
 
     try {
       // Получаем данные игрока из Redis
       const playerData = await this.getFromRedis(`player:${telegramId}`);
+      
+      console.log('👤 [Connection] Player state check:', {
+        telegramId,
+        hasPlayerData: Boolean(playerData),
+        hasLobbyId: Boolean(playerData?.lobbyId),
+        role: playerData?.role,
+        marker: playerData?.marker,
+        timestamp: new Date().toISOString()
+      });
+
       if (playerData?.lobbyId) {
         console.log('🔄 [Reconnect] Found player data:', {
           telegramId,
@@ -243,6 +256,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleDisconnect(client: Socket) {
     const telegramId = client.handshake.query.telegramId as string;
     if (!telegramId) return;
+
+    console.log('🔌 [Disconnect] Client disconnected:', {
+      telegramId,
+      socketId: client.id,
+      hadActiveLobby: this.clientLobbies.has(telegramId),
+      wasInGame: this.clientGames.has(telegramId),
+      activeConnections: this.connectedClients.size,
+      timestamp: new Date().toISOString()
+    });
 
     this.connectedClients.delete(telegramId);
     
@@ -427,7 +449,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.updateTTL(`player:${data.telegramId}`);
 
       const creatorSocket = this.connectedClients.get(data.telegramId);
-      console.log('⭕ [Creator State] Creator joining their own lobby:', {
+      console.log('🎮 [Creator Join] Creator joining attempt:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
         socketState: {
@@ -446,8 +468,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Проверяем существующую игровую сессию в Redis
       const gameData = await this.getFromRedis(`game:${data.lobbyId}`);
+      
+      console.log('🔍 [Creator Join] Game session check:', {
+        lobbyId: data.lobbyId,
+        hasGameData: Boolean(gameData),
+        gameState: gameData ? {
+          board: gameData.board,
+          currentTurn: gameData.currentTurn,
+          lastMoveTime: gameData.lastMoveTime
+        } : null,
+        timestamp: new Date().toISOString()
+      });
+
       if (gameData) {
-        console.log('🎮 [Creator Rejoin] Found active game session:', {
+        console.log('🎮 [Creator Join] Found active game session:', {
           lobbyId: data.lobbyId,
           gameData,
           timestamp: new Date().toISOString()
@@ -468,6 +502,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           position: { x: 0, y: 0 },
           time: 0,
           gameData
+        });
+
+        console.log('✅ [Creator Join] Successfully joined game:', {
+          lobbyId: data.lobbyId,
+          creatorId: data.telegramId,
+          gameState: {
+            board: gameData.board,
+            currentTurn: gameData.currentTurn,
+            lastMoveTime: gameData.lastMoveTime
+          },
+          timestamp: new Date().toISOString()
         });
 
         return { status: 'creator_game_joined' };
@@ -722,6 +767,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: Date.now()
       });
 
+      console.log('🎯 [Invite] Lobby state after invite:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        lobbyStatus: 'pending',
+        creatorMarker: '❌',
+        redisKeys: {
+          player: `player:${data.telegramId}`,
+          lobby: `lobby:${lobby.id}`
+        },
+        clientState: {
+          inClientGames: this.clientGames.has(data.telegramId),
+          inClientLobbies: this.clientLobbies.has(data.telegramId),
+          inConnectedClients: this.connectedClients.has(data.telegramId)
+        },
+        timestamp: new Date().toISOString()
+      });
+
       // Формируем сообщение для отправки
       const result = {
         type: "article",
@@ -926,29 +988,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('checkActiveLobby')
+  @UsePipes(new ValidationPipe())
   async handleCheckActiveLobby(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { telegramId: string }
   ) {
-    try {
-      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
-      
-      if (lobby) {
-        // Получаем оставшееся время TTL
-        const ttl = await this.redis.ttl(lobby.id);
-        
-        return {
-          lobbyId: lobby.id,
-          ttl: ttl > 0 ? ttl : 180, // Если TTL истек, возвращаем дефолтное значение
-          status: lobby.status
-        };
-      }
-      
-      return { lobbyId: null };
-    } catch (error) {
-      console.error('Error checking active lobby:', error);
-      return { error: 'Failed to check active lobby' };
+    console.log('🔍 [ActiveLobby] Checking active lobby:', {
+      telegramId: data.telegramId,
+      existingLobbies: Array.from(this.clientLobbies.entries()),
+      existingGames: Array.from(this.clientGames.entries()),
+      timestamp: new Date().toISOString()
+    });
+
+    const lobbyId = this.clientLobbies.get(data.telegramId);
+
+    if (lobbyId) {
+      console.log('📊 [ActiveLobby] Redis state:', {
+        telegramId: data.telegramId,
+        playerData: await this.getFromRedis(`player:${data.telegramId}`),
+        lobbyData: await this.getFromRedis(`lobby:${lobbyId}`),
+        gameData: await this.getFromRedis(`game:${lobbyId}`),
+        timestamp: new Date().toISOString()
+      });
     }
+
+    return { lobbyId };
   }
 
   onModuleDestroy() {
