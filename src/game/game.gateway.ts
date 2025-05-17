@@ -116,30 +116,33 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           timestamp: new Date().toISOString()
         });
 
-        // Сначала присоединяем клиента к комнате
-        client.join(lobby.id);
-        
-        // Затем отправляем событие показа WaitModal
+        // Сначала отправляем событие показа WaitModal
         client.emit('setShowWaitModal', {
           show: true,
           ttl: ttl,
           creatorMarker: '👑'
         });
         
-        // И только потом отправляем событие о готовности лобби
-        this.server.to(lobby.id).emit('lobbyReady', { 
-          lobbyId: lobby.id,
-          timestamp: Date.now(),
-          ttl: ttl,
-          creatorMarker: '👑'
-        });
+        // Затем присоединяем клиента к комнате
+        client.join(lobby.id);
 
-        console.log('✅ [Creator Reconnect] Sent creator marker and ready event:', {
-          lobbyId: lobby.id,
-          creatorId: telegramId,
-          socketId: client.id,
-          timestamp: new Date().toISOString()
-        });
+        // Добавляем небольшую задержку перед отправкой события lobbyReady
+        setTimeout(() => {
+          // И только потом отправляем событие о готовности лобби
+          this.server.to(lobby.id).emit('lobbyReady', { 
+            lobbyId: lobby.id,
+            timestamp: Date.now(),
+            ttl: ttl,
+            creatorMarker: '👑'
+          });
+
+          console.log('✅ [Creator Reconnect] Sent creator marker and ready event:', {
+            lobbyId: lobby.id,
+            creatorId: telegramId,
+            socketId: client.id,
+            timestamp: new Date().toISOString()
+          });
+        }, 100); // Даем время на подписку на события
       }
     }
 
