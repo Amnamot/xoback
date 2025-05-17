@@ -658,6 +658,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
       
+      // Уведомляем клиента о присоединении к комнате
+      creatorSocket.emit('room', {
+        action: 'join',
+        room: data.lobbyId,
+        timestamp: new Date().toISOString()
+      });
+      
       creatorSocket.join(data.lobbyId);
       
       console.log('✅ [Join] Creator rejoined room:', {
@@ -677,7 +684,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       timestamp: new Date().toISOString()
     });
 
+    // Отправляем событие всем в комнате
     this.server.to(data.lobbyId).emit('gameStart', { session: gameSession });
+
+    // Дополнительно отправляем событие напрямую создателю
+    if (creatorSocket) {
+      console.log('📤 [Join] Sending direct gameStart to creator:', {
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        timestamp: new Date().toISOString()
+      });
+      creatorSocket.emit('gameStart', { session: gameSession });
+    }
 
     // Проверяем отправку события
     const sockets = await this.server.in(data.lobbyId).fetchSockets();
