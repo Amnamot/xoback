@@ -638,21 +638,42 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Проверяем состояние сокета создателя
     const creatorSocket = this.connectedClients.get(lobby.creatorId);
-    console.log('Creator socket state:', {
+    console.log('🔍 [Join] Creator socket state before gameStart:', {
       lobbyId: data.lobbyId,
       creatorId: lobby.creatorId,
       socketState: {
         connected: creatorSocket?.connected || false,
         rooms: Array.from(creatorSocket?.rooms || []),
+        inTargetRoom: creatorSocket?.rooms?.has(data.lobbyId),
         handshake: creatorSocket?.handshake?.query || {}
       },
       timestamp: new Date().toISOString()
     });
 
+    // Если создатель не в комнате, добавляем его
+    if (creatorSocket && !creatorSocket.rooms.has(data.lobbyId)) {
+      console.log('⚠️ [Join] Creator not in room, rejoining:', {
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        timestamp: new Date().toISOString()
+      });
+      
+      creatorSocket.join(data.lobbyId);
+      
+      console.log('✅ [Join] Creator rejoined room:', {
+        lobbyId: data.lobbyId,
+        creatorId: lobby.creatorId,
+        newRooms: Array.from(creatorSocket.rooms || []),
+        timestamp: new Date().toISOString()
+      });
+    }
+
     // Проверяем членов комнаты
-    console.log('Room members before gameStart:', {
+    console.log('👥 [Join] Room members before gameStart:', {
       lobbyId: data.lobbyId,
       members: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
+      creatorInRoom: creatorSocket?.rooms?.has(data.lobbyId),
+      opponentInRoom: client.rooms.has(data.lobbyId),
       timestamp: new Date().toISOString()
     });
 
@@ -660,10 +681,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Проверяем отправку события
     const sockets = await this.server.in(data.lobbyId).fetchSockets();
-    console.log('GameStart event sent to:', {
+    console.log('📤 [Join] GameStart event sent to:', {
       lobbyId: data.lobbyId,
       recipientCount: sockets.length,
-      recipients: sockets.map(s => s.handshake.query.telegramId),
+      recipients: sockets.map(s => ({
+        id: s.id,
+        telegramId: s.handshake.query.telegramId,
+        rooms: Array.from(s.rooms || [])
+      })),
       timestamp: new Date().toISOString()
     });
 
@@ -839,7 +864,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateInviteDto
   ) {
-    console.log('🔍 Creating invite for telegramId:', data.telegramId);
+    console.log('🔍 [Invite] Starting invite creation for telegramId:', {
+      telegramId: data.telegramId,
+      socketId: client.id,
+      clientRooms: Array.from(client.rooms || []),
+      timestamp: new Date().toISOString()
+    });
     
     try {
       // Получаем лобби из GameService
@@ -850,7 +880,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { error: 'Lobby not found' };
       }
 
-      console.log('✅ Found lobby:', lobby.id);
+      console.log('✅ [Invite] Found lobby:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        clientRooms: Array.from(client.rooms || []),
+        timestamp: new Date().toISOString()
+      });
+
+      // Проверяем членство в комнате перед сохранением в Redis
+      console.log('🔍 [Invite] Room membership check before Redis:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        inRoom: client.rooms.has(lobby.id),
+        allRooms: Array.from(client.rooms || []),
+        timestamp: new Date().toISOString()
+      });
 
       // Сохраняем данные в Redis
       await this.saveToRedis(`player:${data.telegramId}`, {
@@ -871,6 +915,33 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: Date.now()
       });
 
+      // Проверяем членство в комнате после сохранения в Redis
+      console.log('🔍 [Invite] Room membership check after Redis:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        inRoom: client.rooms.has(lobby.id),
+        allRooms: Array.from(client.rooms || []),
+        timestamp: new Date().toISOString()
+      });
+
+      // Если создатель не в комнате, добавляем его
+      if (!client.rooms.has(lobby.id)) {
+        console.log('⚠️ [Invite] Creator not in room, rejoining:', {
+          lobbyId: lobby.id,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+        
+        client.join(lobby.id);
+        
+        console.log('✅ [Invite] Creator rejoined room:', {
+          lobbyId: lobby.id,
+          creatorId: data.telegramId,
+          newRooms: Array.from(client.rooms || []),
+          timestamp: new Date().toISOString()
+        });
+      }
+
       console.log('🎯 [Invite] Lobby state after invite:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
@@ -883,7 +954,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         clientState: {
           inClientGames: this.clientGames.has(data.telegramId),
           inClientLobbies: this.clientLobbies.has(data.telegramId),
-          inConnectedClients: this.connectedClients.has(data.telegramId)
+          inConnectedClients: this.connectedClients.has(data.telegramId),
+          rooms: Array.from(client.rooms || [])
         },
         timestamp: new Date().toISOString()
       });
