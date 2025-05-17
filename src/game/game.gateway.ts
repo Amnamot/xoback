@@ -109,7 +109,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const pendingTTL = await this.redis.ttl(`pending:${lobby.id}`);
         const ttl = pendingTTL > 0 ? pendingTTL : 30;
 
-        console.log('👑 [Creator Reconnect] Sending creator marker:', {
+        console.log('⭕ [Creator Reconnect] Sending creator marker:', {
           lobbyId: lobby.id,
           creatorId: telegramId,
           socketId: client.id,
@@ -120,7 +120,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.emit('setShowWaitModal', {
           show: true,
           ttl: ttl,
-          creatorMarker: '👑'
+          creatorMarker: '⭕'
         });
         
         // Затем присоединяем клиента к комнате
@@ -133,7 +133,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             lobbyId: lobby.id,
             timestamp: Date.now(),
             ttl: ttl,
-            creatorMarker: '👑'
+            creatorMarker: '⭕'
           });
 
           console.log('✅ [Creator Reconnect] Sent creator marker and ready event:', {
@@ -325,9 +325,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(lobby.id).emit('lobbyReady', { 
         lobbyId: lobby.id,
         timestamp: Date.now(),
-        creatorMarker: '👑'
+        creatorMarker: '⭕'
       });
-      console.log('👑 [Create Lobby] Sent creator marker:', {
+      console.log('⭕ [Create Lobby] Sent creator marker:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
         socketId: client.id,
@@ -421,7 +421,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     if (lobby.creatorId === data.telegramId) {
       const creatorSocket = this.connectedClients.get(data.telegramId);
-      console.log('👑 [Creator State] Creator joining their own lobby:', {
+      console.log('⭕ [Creator State] Creator joining their own lobby:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
         socketState: {
