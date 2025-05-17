@@ -535,18 +535,25 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.clientGames.set(data.telegramId, data.lobbyId);
 
       // 5. Отправляем событие начала игры
-      console.log('📢 [Game Start] Broadcasting gameStart event:', {
+      console.log('📢 [Game Start] Pre-emit state check:', {
         lobbyId: data.lobbyId,
-        roomMembers: roomMembers,
+        roomMembers: Array.from(this.server.sockets.adapter.rooms.get(data.lobbyId) || []),
         creator: {
           id: lobby.creatorId,
-          socketConnected: creatorSocket.connected,
+          socketId: creatorSocket.id,
+          connected: creatorSocket.connected,
+          rooms: Array.from(creatorSocket.rooms || []),
           inGame: this.clientGames.has(lobby.creatorId)
         },
         opponent: {
           id: data.telegramId,
-          socketConnected: client.connected,
+          socketId: client.id,
+          connected: client.connected,
+          rooms: Array.from(client.rooms),
           inGame: this.clientGames.has(data.telegramId)
+        },
+        session: {
+          id: session.id
         },
         timestamp: new Date().toISOString()
       });
@@ -555,6 +562,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         creator: lobby.creatorId,
         opponent: data.telegramId,
         session
+      });
+
+      console.log('✅ [Game Start] Event emitted:', {
+        lobbyId: data.lobbyId,
+        eventName: 'gameStart',
+        recipientRoom: data.lobbyId,
+        timestamp: new Date().toISOString()
       });
 
       // 6. Отправляем начальное состояние игры
