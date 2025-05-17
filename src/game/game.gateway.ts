@@ -835,7 +835,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id 
       };
     } catch (error) {
-      console.error('❌ Error creating invite:', error);
+      console.error('🛑 Error creating invite:', error);
       return { error: 'Failed to create invite' };
     }
   }
@@ -916,7 +916,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp
       };
     } catch (error) {
-      console.error('❌ Error in handleCancelLobby:', {
+      console.error('🛑 Error in handleCancelLobby:', {
         error: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined,
         timestamp: new Date().toISOString()
@@ -936,10 +936,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const states: Record<string, string> = {
       'loader': '⌛ User on Loader screen',
-      'startScreen': '🎮 User on Start screen',
+      'startScreen': '🧧 User on Start screen',
       'waitModal': '⏳ WaitModal is shown',
-      'loss': '❌ User on Loss screen',
-      'appClosed': '👋 User closed the app'
+      'loss': '💀 User on Loss screen',
+      'appClosed': '👎 User closed the app'
     };
 
     console.log(`${states[data.state] || '🔄 UI State change'}:`, {
