@@ -162,29 +162,48 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       if (playerData?.lobbyId) {
-        console.log('🔄 [Reconnect] Found player data:', {
+        console.log('🔄 [State Restore] Found player data:', {
           telegramId,
           playerData,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          connectionState: {
+            inClientGames: this.clientGames.has(telegramId),
+            inClientLobbies: this.clientLobbies.has(telegramId),
+            inConnectedClients: this.connectedClients.has(telegramId)
+          }
         });
 
         // Получаем данные лобби
         const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
         if (lobbyData) {
-          console.log('🎮 [Reconnect] Found lobby data:', {
+          console.log('🎮 [State Restore] Found lobby data:', {
             lobbyId: playerData.lobbyId,
             lobbyData,
+            lobbyStatus: lobbyData.status,
+            isCreator: lobbyData.creatorId === telegramId,
             timestamp: new Date().toISOString()
           });
 
           // Проверяем наличие активной игры
           const gameData = await this.getFromRedis(`game:${playerData.lobbyId}`);
           
+          console.log('🎲 [State Restore] Game data check:', {
+            lobbyId: playerData.lobbyId,
+            hasGameData: Boolean(gameData),
+            gameState: gameData ? {
+              currentTurn: gameData.currentTurn,
+              lastMoveTime: gameData.lastMoveTime,
+              board: gameData.board
+            } : null,
+            timestamp: new Date().toISOString()
+          });
+
           if (gameData) {
             // Если есть активная игра - подключаем к ней
-            console.log('🎲 [Reconnect] Found active game:', {
+            console.log('🎯 [State Restore] Restoring active game:', {
               lobbyId: playerData.lobbyId,
-              gameData,
+              playerRole: playerData.role,
+              isCurrentTurn: gameData.currentTurn === telegramId,
               timestamp: new Date().toISOString()
             });
 
@@ -196,21 +215,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`lobby:${playerData.lobbyId}`);
             await this.updateTTL(`game:${playerData.lobbyId}`);
 
+            const currentPlayer = gameData.currentTurn === telegramId ? 
+              (playerData.role === 'creator' ? 'X' : 'O') : 
+              (playerData.role === 'creator' ? 'O' : 'X');
+
             // Отправляем текущее состояние игры
             client.emit('gameState', {
               board: gameData.board,
-              currentPlayer: gameData.currentTurn === telegramId ? 
-                (playerData.role === 'creator' ? 'X' : 'O') : 
-                (playerData.role === 'creator' ? 'O' : 'X'),
+              currentPlayer,
               scale: 1,
               position: { x: 0, y: 0 },
               time: 0,
               gameData
             });
 
-            console.log('✅ [Reconnect] Player reconnected to game:', {
+            console.log('✅ [State Restore] Game state sent:', {
               telegramId,
               lobbyId: playerData.lobbyId,
+              currentPlayer,
               timestamp: new Date().toISOString()
             });
           } else if (playerData.inviteSent) {
@@ -527,7 +549,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Логика для присоединения оппонента
     const lobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
+    
+    console.log('👥 [Opponent Join] Processing join request:', {
+      lobbyId: data.lobbyId,
+      opponentId: data.telegramId,
+      lobbyData,
+      timestamp: new Date().toISOString()
+    });
+
     if (lobbyData && lobbyData.status === 'active') {
+      console.log('⚠️ [Opponent Join] Lobby already active:', {
+        lobbyId: data.lobbyId,
+        opponentId: data.telegramId,
+        lobbyStatus: lobbyData.status,
+        timestamp: new Date().toISOString()
+      });
       return {
         status: 'error',
         errorType: 'full',
@@ -536,37 +572,75 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     // Сохраняем данные оппонента в Redis
-    await this.saveToRedis(`player:${data.telegramId}`, {
+    const opponentData = {
       lobbyId: data.lobbyId,
       role: 'opponent',
       marker: '⭕'
+    };
+    await this.saveToRedis(`player:${data.telegramId}`, opponentData);
+
+    console.log('✅ [Opponent Join] Saved opponent data:', {
+      lobbyId: data.lobbyId,
+      opponentId: data.telegramId,
+      opponentData,
+      timestamp: new Date().toISOString()
     });
 
     // Обновляем данные лобби
-    await this.saveToRedis(`lobby:${data.lobbyId}`, {
+    const updatedLobbyData = {
       ...lobbyData,
       opponentId: data.telegramId,
       status: 'active'
+    };
+    await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
+
+    console.log('📝 [Opponent Join] Updated lobby data:', {
+      lobbyId: data.lobbyId,
+      previousState: lobbyData,
+      newState: updatedLobbyData,
+      timestamp: new Date().toISOString()
     });
 
     // Создаем игровую сессию
-    await this.saveToRedis(`game:${data.lobbyId}`, {
+    const gameData = {
       board: Array(9).fill(''),
       currentTurn: lobby.creatorId,
       lastMoveTime: Date.now()
+    };
+    await this.saveToRedis(`game:${data.lobbyId}`, gameData);
+
+    console.log('🎮 [Game Session] Created new game:', {
+      lobbyId: data.lobbyId,
+      creatorId: lobby.creatorId,
+      opponentId: data.telegramId,
+      initialState: gameData,
+      timestamp: new Date().toISOString()
     });
 
     // Подключаем оппонента к комнате
     client.join(data.lobbyId);
     this.clientGames.set(data.telegramId, data.lobbyId);
 
+    console.log('🔗 [Opponent Join] Connected to game room:', {
+      lobbyId: data.lobbyId,
+      opponentId: data.telegramId,
+      socketId: client.id,
+      rooms: Array.from(client.rooms),
+      timestamp: new Date().toISOString()
+    });
+
     // Отправляем событие о начале игры
-    this.server.to(data.lobbyId).emit('gameStart', {
-      session: {
-        id: data.lobbyId,
-        creatorId: lobby.creatorId,
-        opponentId: data.telegramId
-      }
+    const gameSession = {
+      id: data.lobbyId,
+      creatorId: lobby.creatorId,
+      opponentId: data.telegramId
+    };
+    this.server.to(data.lobbyId).emit('gameStart', { session: gameSession });
+
+    console.log('🚀 [Game Start] Emitted game start event:', {
+      lobbyId: data.lobbyId,
+      session: gameSession,
+      timestamp: new Date().toISOString()
     });
 
     return { status: 'joined' };
@@ -931,32 +1005,44 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('uiState')
   async handleUiState(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed', telegramId: string, details?: any }
+    @MessageBody() data: { state: 'loader' | 'startScreen' | 'waitModal' | 'loss' | 'appClosed' | 'minimized' | 'expanded', telegramId: string, details?: any }
   ) {
-    const states: Record<string, string> = {
-      'loader': '⌛ User on Loader screen',
-      'startScreen': '🧧 User on Start screen',
-      'waitModal': '⏳ WaitModal is shown',
-      'loss': '💀 User on Loss screen',
-      'appClosed': '👎 User closed the app'
-    };
-
-    console.log(`${states[data.state] || '🔄 UI State change'}:`, {
+    console.log('📱 [WebApp] State change:', {
       telegramId: data.telegramId,
       socketId: client.id,
-      state: data.state,
-      ...(data.details && { details: data.details })
+      previousState: client.data?.lastState || 'unknown',
+      newState: data.state,
+      details: data.details,
+      connectionState: {
+        inClientGames: this.clientGames.has(data.telegramId),
+        inClientLobbies: this.clientLobbies.has(data.telegramId),
+        inConnectedClients: this.connectedClients.has(data.telegramId)
+      },
+      timestamp: new Date().toISOString()
     });
 
+    // Сохраняем состояние в данных сокета
+    client.data = { ...client.data, lastState: data.state };
+
     try {
-      // При сворачивании приложения обновляем TTL
-      if (data.state === 'appClosed') {
-        // Получаем данные игрока
-        const playerData = await this.getFromRedis(`player:${data.telegramId}`);
-        if (playerData?.lobbyId) {
-          console.log('⏱️ [AppClosed] Updating TTL for:', {
+      // Получаем данные игрока
+      const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+      
+      if (playerData?.lobbyId) {
+        console.log('🎮 [WebApp] Player game state:', {
+          telegramId: data.telegramId,
+          appState: data.state,
+          playerData,
+          timestamp: new Date().toISOString()
+        });
+
+        // При сворачивании или разворачивании приложения
+        if (data.state === 'minimized' || data.state === 'expanded') {
+          console.log('🔄 [WebApp] View state change:', {
             telegramId: data.telegramId,
+            action: data.state,
             lobbyId: playerData.lobbyId,
+            role: playerData.role,
             timestamp: new Date().toISOString()
           });
 
@@ -964,24 +1050,40 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`player:${data.telegramId}`);
           await this.updateTTL(`lobby:${playerData.lobbyId}`);
 
-          // Если есть активная игра, обновляем и её TTL
+          // Проверяем наличие активной игры
           const gameData = await this.getFromRedis(`game:${playerData.lobbyId}`);
           if (gameData) {
+            console.log('🎲 [WebApp] Active game check:', {
+              lobbyId: playerData.lobbyId,
+              hasGameData: true,
+              currentTurn: gameData.currentTurn,
+              isPlayerTurn: gameData.currentTurn === data.telegramId,
+              timestamp: new Date().toISOString()
+            });
+
             await this.updateTTL(`game:${playerData.lobbyId}`);
           }
 
           // Обновляем статус в Redis
           await this.saveToRedis(`player:${data.telegramId}`, {
             ...playerData,
-            lastAction: 'app_closed',
+            lastAction: data.state,
             timestamp: Date.now()
+          });
+
+          console.log('✅ [WebApp] State updated:', {
+            telegramId: data.telegramId,
+            state: data.state,
+            lobbyId: playerData.lobbyId,
+            timestamp: new Date().toISOString()
           });
         }
       }
     } catch (error) {
-      console.error('❌ [AppClosed] Error updating TTL:', {
+      console.error('❌ [WebApp] Error handling state change:', {
         error: error instanceof Error ? error.message : 'Unknown error',
         telegramId: data.telegramId,
+        state: data.state,
         timestamp: new Date().toISOString()
       });
     }
