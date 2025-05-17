@@ -437,7 +437,56 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         },
         timestamp: new Date().toISOString()
       });
+
+      // Проверяем, существует ли уже игровая сессия
+      const gameSession = await this.gameService.getGameSession(data.lobbyId);
+      if (gameSession) {
+        console.log('🎮 [Creator Rejoin] Found active game session:', {
+          lobbyId: data.lobbyId,
+          sessionId: gameSession.id,
+          timestamp: new Date().toISOString()
+        });
+
+        // Подключаем создателя к игровой комнате
+        client.join(data.lobbyId);
+        this.clientGames.set(data.telegramId, data.lobbyId);
+
+        // Отправляем текущее состояние игры
+        client.emit('gameState', {
+          board: gameSession.board,
+          currentPlayer: gameSession.currentTurn === gameSession.creatorId ? 'O' : 'X',
+          scale: 1,
+          position: { x: 0, y: 0 },
+          time: 0,
+          playerTime1: gameSession.playerTime1,
+          playerTime2: gameSession.playerTime2,
+          gameSession: gameSession
+        });
+
+        return { status: 'creator_game_joined' };
+      }
+
+      // Если игровой сессии нет, подключаем к лобби
       client.join(data.lobbyId);
+      this.clientLobbies.set(data.telegramId, data.lobbyId);
+
+      // Отправляем события для показа WaitModal
+      const ttl = await this.redis.ttl(lobby.id);
+      client.emit('setShowWaitModal', {
+        show: true,
+        ttl: ttl > 0 ? ttl : 30,
+        creatorMarker: '⭕'
+      });
+
+      setTimeout(() => {
+        this.server.to(data.lobbyId).emit('lobbyReady', { 
+          lobbyId: data.lobbyId,
+          timestamp: Date.now(),
+          ttl: ttl > 0 ? ttl : 30,
+          creatorMarker: '⭕'
+        });
+      }, 100);
+
       return { status: 'creator' };
     }
 
