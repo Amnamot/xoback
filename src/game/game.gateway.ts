@@ -41,6 +41,8 @@ interface PlayerData {
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
   timestamp?: number;        // Временная метка последнего обновления
+  avatar?: string;          // URL аватара игрока
+  name?: string;            // Имя игрока
 }
 
 interface LobbyData {
@@ -1475,31 +1477,72 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: PlayerInfoDto
   ): Promise<void> {
     try {
-      console.log('Received player info:', {
-        gameId: data.gameId,
-        playerId: data.playerInfo.id,
-        hasName: !!data.playerInfo.name,
-        hasAvatar: !!data.playerInfo.avatar
+      const { gameId, playerInfo } = data;
+      const telegramId = client.handshake.query.telegramId as string;
+
+      console.log('👤 [PlayerInfo] Received player info:', {
+        gameId,
+        telegramId,
+        playerInfo,
+        timestamp: new Date().toISOString()
       });
 
-      const gameData = await this.getFromRedis(`game:${data.gameId}`);
+      // Получаем данные игры
+      const gameData = await this.getFromRedis(`game:${gameId}`);
       if (!gameData) {
-        console.warn('Game not found for player info:', data.gameId);
+        console.error('❌ [PlayerInfo] Game not found:', {
+          gameId,
+          timestamp: new Date().toISOString()
+        });
         return;
       }
 
-      const isCreator = gameData.creatorId === data.playerInfo.id;
-      const opponentId = isCreator ? gameData.opponentId : gameData.creatorId;
+      // Получаем данные игрока
+      const playerData = await this.getFromRedis(`player:${telegramId}`);
+      if (!playerData) {
+        console.error('❌ [PlayerInfo] Player data not found:', {
+          telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
 
-      if (opponentId) {
-        this.server.to(data.gameId).emit('opponentInfo', {
-          id: data.playerInfo.id,
-          name: data.playerInfo.name,
-          avatar: data.playerInfo.avatar
+      // Обновляем информацию об игроке
+      const updatedPlayerData = {
+        ...playerData,
+        avatar: playerInfo.avatar,
+        name: playerInfo.name,
+        timestamp: Date.now()
+      };
+
+      // Сохраняем обновленные данные
+      await this.saveToRedis(`player:${telegramId}`, updatedPlayerData);
+
+      // Отправляем обновленную информацию всем игрокам в игре
+      const opponentId = playerData.role === 'creator' ? gameData.opponentId : gameData.creatorId;
+      const opponentSocket = this.connectedClients.get(opponentId);
+
+      if (opponentSocket) {
+        opponentSocket.emit('playerInfo', {
+          gameId,
+          playerInfo: {
+            id: telegramId,
+            avatar: playerInfo.avatar,
+            name: playerInfo.name
+          }
         });
       }
+
+      console.log('✅ [PlayerInfo] Player info updated successfully:', {
+        gameId,
+        telegramId,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
-      console.error('Error handling player info:', error.message);
+      console.error('❌ [PlayerInfo] Error handling player info:', {
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 
