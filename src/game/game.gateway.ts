@@ -758,12 +758,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           data.telegramId
         );
 
-        // Отправляем событие начала игры
-        this.server.to(data.lobbyId).emit('gameStart', {
-          gameId: gameSession.id,
-          startTime: gameSession.startedAt
-        });
-
         // Отправляем начальное состояние игры
         const MAX_MOVE_TIME = 30000;
         this.server.to(data.lobbyId).emit('gameState', {
