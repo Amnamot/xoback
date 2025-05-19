@@ -22,8 +22,7 @@ import {
   JoinGameDto,
   TimeExpiredDto,
   CreateInviteDto,
-  CancelLobbyDto,
-  PlayerInfoDto
+  CancelLobbyDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -41,15 +40,13 @@ interface PlayerData {
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
   timestamp?: number;        // Временная метка последнего обновления
-  avatar?: string;          // URL аватара игрока
-  name?: string;            // Имя игрока
 }
 
 interface LobbyData {
   creatorId: string;
   opponentId?: string;
   status: 'pending' | 'active' | 'closed';
-  socketIds: string[];          // Массив ID сокетов, подключенных к лобби
+  socketId: string;          // ID сокета, жестко связанный с лобби
 }
 
 interface GameData {
@@ -222,34 +219,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             lobbyData,
             lobbyStatus: lobbyData.status,
             isCreator: lobbyData.creatorId === telegramId,
-            socketIds: lobbyData.socketIds,
+            socketId: lobbyData.socketId,
             currentSocketId: client.id,
             timestamp: new Date().toISOString()
           });
 
           // Проверяем и обновляем socketId
-          if (!lobbyData.socketIds) {
-            console.log('⚠️ [Socket] No socketIds found, initializing:', {
+          if (lobbyData.socketId && lobbyData.socketId !== client.id) {
+            console.log('🔄 [Socket] Updating socketId for lobby:', {
               lobbyId: playerData.lobbyId,
-              newSocketId: client.id,
-              timestamp: new Date().toISOString()
-            });
-            
-            await this.saveToRedis(`lobby:${playerData.lobbyId}`, {
-              ...lobbyData,
-              socketIds: [client.id]
-            });
-          } else if (!lobbyData.socketIds.includes(client.id)) {
-            console.log('🔄 [Socket] Adding new socketId to lobby:', {
-              lobbyId: playerData.lobbyId,
-              existingSocketIds: lobbyData.socketIds,
+              oldSocketId: lobbyData.socketId,
               newSocketId: client.id,
               timestamp: new Date().toISOString()
             });
 
             await this.saveToRedis(`lobby:${playerData.lobbyId}`, {
               ...lobbyData,
-              socketIds: [...lobbyData.socketIds, client.id]
+              socketId: client.id
             });
           }
 
@@ -287,7 +273,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`game:${playerData.lobbyId}`);
 
             // Отправляем текущее состояние игры
-            this.server.to(playerData.lobbyId).emit('gameState', {
+            client.emit('gameState', {
               board: gameData.board,
               currentPlayer: gameData.currentTurn === telegramId ? 
                 (playerData.role === 'creator' ? 'X' : 'O') : 
@@ -457,12 +443,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         creatorId: data.telegramId,
         status: 'active',
         createdAt: Date.now(),
-        socketIds: [client.id]
+        socketId: client.id
       });
       
       console.log('🔌 [Socket] Saved socketId for lobby:', {
         lobbyId: lobby.id,
-        socketIds: [client.id],
+        socketId: client.id,
         timestamp: new Date().toISOString()
       });
       
@@ -497,7 +483,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('❌ [Create Lobby] Sent creator marker:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
-        socketIds: [client.id],
+        socketId: client.id,
         timestamp: new Date().toISOString()
       });
       
@@ -583,17 +569,16 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Обновляем socketId в данных лобби
       const currentLobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
       if (currentLobbyData) {
-        console.log('🔄 [Socket] Adding socket to lobby:', {
+        console.log('🔄 [Socket] Updating socketId on join:', {
           lobbyId: data.lobbyId,
-          existingSocketIds: currentLobbyData.socketIds,
+          oldSocketId: currentLobbyData.socketId,
           newSocketId: client.id,
           timestamp: new Date().toISOString()
         });
 
-        // Сохраняем оба socketId в Redis
         await this.saveToRedis(`lobby:${data.lobbyId}`, {
           ...currentLobbyData,
-          socketIds: [...currentLobbyData.socketIds, client.id]
+          socketId: client.id
         });
       }
 
@@ -663,7 +648,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`game:${data.lobbyId}`);
 
           // Отправляем текущее состояние игры
-          this.server.to(data.lobbyId).emit('gameState', {
+          client.emit('gameState', {
             board: gameData.board,
             currentPlayer: gameData.currentTurn === gameData.creatorId ? 'X' : 'O',
             scale: 1,
@@ -740,8 +725,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const updatedLobbyData = {
           ...lobby,
           opponentId: data.telegramId,
-          status: 'closed',
-          socketIds: lobbyData.socketIds || [] // Сохраняем существующие socketIds
+          status: 'closed'
         };
         await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
 
@@ -757,6 +741,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           data.lobbyId,
           data.telegramId
         );
+
+        // Отправляем событие начала игры
+        this.server.to(data.lobbyId).emit('gameStart', {
+          gameId: gameSession.id,
+          startTime: gameSession.startedAt
+        });
 
         // Отправляем начальное состояние игры
         const MAX_MOVE_TIME = 30000;
@@ -980,147 +970,39 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleTimeUpdate(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: UpdatePlayerTimeDto
-  ): Promise<void> {
-    const telegramId = client.handshake.query.telegramId as string;
+  ) {
+    const session = await this.gameService.getGameSession(data.gameId);
+    
+    if (!session) {
+      return { status: 'error', message: 'Game session not found' };
+    }
 
-    console.log('⏱️ [GameHeader] Received time update:', {
-      telegramId,
-      gameId: data.gameId,
-      playerTimes: data.playerTimes,
-      timestamp: new Date().toISOString()
+    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
+      playerTime1: data.playerTimes.playerTime1,
+      playerTime2: data.playerTimes.playerTime2
     });
 
-    try {
-      const gameData = await this.getFromRedis(`game:${data.gameId}`);
-      if (!gameData) {
-        console.error('❌ [GameHeader] Game not found for time update:', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
+    this.server.to(data.gameId).emit('timeUpdated', {
+      playerTime1: updatedSession.playerTime1,
+      playerTime2: updatedSession.playerTime2
+    });
 
-      // Обновляем время в Redis
-      await this.saveToRedis(`game:${data.gameId}`, {
-        ...gameData,
-        playerTimes: data.playerTimes,
-        lastUpdateTime: Date.now()
-      });
-
-      console.log('✅ [GameHeader] Time updated in game:', {
-        gameId: data.gameId,
-        playerTimes: data.playerTimes,
-        timestamp: new Date().toISOString()
-      });
-
-      // Отправляем обновление оппоненту
-      const opponentId = gameData.currentTurn === telegramId ? gameData.opponentId : gameData.creatorId;
-      const opponentSocket = this.connectedClients.get(opponentId);
-
-      if (opponentSocket) {
-        opponentSocket.emit('timeUpdate', {
-          gameId: data.gameId,
-          playerTimes: data.playerTimes
-        });
-
-        console.log('📤 [GameHeader] Sent time update to opponent:', {
-          from: telegramId,
-          to: opponentId,
-          gameId: data.gameId,
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        console.warn('⚠️ [GameHeader] Opponent socket not found for time update:', {
-          opponentId,
-          gameId: data.gameId,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      console.error('❌ [GameHeader] Error updating time:', {
-        error: error.message,
-        telegramId,
-        gameId: data.gameId,
-        timestamp: new Date().toISOString()
-      });
-    }
+    return { status: 'success' };
   }
 
-  @SubscribeMessage('timeExpired')
+  @SubscribeMessage('gameOver')
   @UsePipes(new ValidationPipe())
-  async handleTimeExpired(
+  async handleGameOver(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: TimeExpiredDto
-  ): Promise<void> {
-    const telegramId = client.handshake.query.telegramId as string;
-
-    console.log('⏰ [GameHeader] Time expired for player:', {
-      telegramId,
-      gameId: data.gameId,
-      player: data.player,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      const gameData = await this.getFromRedis(`game:${data.gameId}`);
-      if (!gameData) {
-        console.error('❌ [GameHeader] Game not found for time expired:', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Определяем победителя
-      const winner = data.player === gameData.creatorId ? gameData.opponentId : gameData.creatorId;
-
-      // Обновляем состояние игры
-      await this.saveToRedis(`game:${data.gameId}`, {
-        ...gameData,
-        status: 'finished',
-        winner,
-        endTime: Date.now()
-      });
-
-      console.log('🏆 [GameHeader] Game finished due to time expired:', {
-        gameId: data.gameId,
-        loser: data.player,
-        winner,
-        timestamp: new Date().toISOString()
-      });
-
-      // Отправляем результат обоим игрокам
-      const creatorSocket = this.connectedClients.get(gameData.creatorId);
-      const opponentSocket = this.connectedClients.get(gameData.opponentId);
-
-      if (creatorSocket) {
-        creatorSocket.emit('gameOver', {
-          gameId: data.gameId,
-          winner
-        });
-      }
-
-      if (opponentSocket) {
-        opponentSocket.emit('gameOver', {
-          gameId: data.gameId,
-          winner
-        });
-      }
-
-      console.log('📤 [GameHeader] Sent game over to players:', {
-        gameId: data.gameId,
-        winner,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('❌ [GameHeader] Error handling time expired:', {
-        error: error.message,
-        telegramId,
-        gameId: data.gameId,
-        timestamp: new Date().toISOString()
-      });
+    @MessageBody() data: GameOverDto
+  ) {
+    await this.gameService.endGameSession(data.gameId, data.winner);
+    this.server.to(data.gameId).emit('gameEnded', { winner: data.winner });
+    
+    const session = await this.gameService.getGameSession(data.gameId);
+    if (session) {
+      this.clientGames.delete(session.creatorId);
+      this.clientGames.delete(session.opponentId);
     }
   }
 
@@ -1134,6 +1016,36 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.join(data.gameId);
     
     return { status: 'joined' };
+  }
+
+  @SubscribeMessage('timeExpired')
+  @UsePipes(new ValidationPipe())
+  async handleTimeExpired(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: TimeExpiredDto
+  ) {
+    const session = await this.gameService.getGameSession(data.gameId);
+    
+    if (!session) {
+      return { status: 'error', message: 'Game session not found' };
+    }
+
+    const winner = data.player === session.creatorId ? session.opponentId : session.creatorId;
+
+    await this.gameService.endGameSession(data.gameId, winner);
+
+    this.server.to(data.gameId).emit('gameEnded', {
+      winner,
+      reason: 'timeout',
+      statistics: {
+        totalTime: Math.floor((Date.now() - session.startedAt) / 1000),
+        moves: session.numMoves,
+        playerTime1: session.playerTime1,
+        playerTime2: session.playerTime2
+      }
+    });
+
+    return { status: 'success' };
   }
 
   @SubscribeMessage('createInvite')
@@ -1553,123 +1465,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return { lobbyId };
-  }
-
-  @SubscribeMessage('playerInfo')
-  @UsePipes(new ValidationPipe())
-  async handlePlayerInfo(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: PlayerInfoDto
-  ): Promise<void> {
-    const telegramId = client.handshake.query.telegramId as string;
-    
-    console.log('👤 [GameHeader] Received player info update:', {
-      telegramId,
-      gameId: data.gameId,
-      playerInfo: data.playerInfo,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      const gameData = await this.getFromRedis(`game:${data.gameId}`);
-      if (!gameData) {
-        console.error('❌ [GameHeader] Game not found:', {
-          gameId: data.gameId,
-          telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      const playerData = await this.getFromRedis(`player:${telegramId}`);
-      if (!playerData) {
-        console.error('❌ [GameHeader] Player data not found:', {
-          telegramId,
-          gameId: data.gameId,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      // Обновляем информацию об игроке
-      const updatedPlayerData = {
-        ...playerData,
-        avatar: data.playerInfo.avatar,
-        name: data.playerInfo.name,
-        timestamp: Date.now()
-      };
-
-      await this.saveToRedis(`player:${telegramId}`, updatedPlayerData);
-
-      console.log('✅ [GameHeader] Player info updated:', {
-        telegramId,
-        gameId: data.gameId,
-        updatedInfo: {
-          avatar: data.playerInfo.avatar,
-          name: data.playerInfo.name
-        },
-        timestamp: new Date().toISOString()
-      });
-
-      // Отправляем обновленную информацию оппоненту
-      const opponentId = playerData.role === 'creator' ? gameData.opponentId : gameData.creatorId;
-      const opponentSocket = this.connectedClients.get(opponentId);
-
-      if (opponentSocket) {
-        opponentSocket.emit('playerInfo', {
-          gameId: data.gameId,
-          playerInfo: {
-            id: telegramId,
-            avatar: data.playerInfo.avatar,
-            name: data.playerInfo.name
-          }
-        });
-
-        console.log('📤 [GameHeader] Sent player info to opponent:', {
-          from: telegramId,
-          to: opponentId,
-          gameId: data.gameId,
-          timestamp: new Date().toISOString()
-        });
-      } else {
-        console.warn('⚠️ [GameHeader] Opponent socket not found:', {
-          opponentId,
-          gameId: data.gameId,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      console.error('❌ [GameHeader] Error updating player info:', {
-        error: error.message,
-        telegramId,
-        gameId: data.gameId,
-        timestamp: new Date().toISOString()
-      });
-    }
-  }
-
-  @SubscribeMessage('checkConnection')
-  async handleCheckConnection(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { telegramId: string, gameId: string }
-  ): Promise<void> {
-    try {
-      const { telegramId, gameId } = data;
-      
-      // Проверяем состояние в Redis
-      const playerData = await this.getFromRedis(`player:${telegramId}`);
-      const gameData = await this.getFromRedis(`game:${gameId}`);
-      
-      if (playerData && gameData) {
-        // Если данные существуют в Redis, соединение активно
-        client.emit('connectionState', { isConnected: true });
-      } else {
-        client.emit('connectionState', { isConnected: false });
-      }
-    } catch (error) {
-      console.error('Error checking connection state:', error);
-      client.emit('connectionState', { isConnected: false });
-    }
   }
 
   onModuleDestroy() {

@@ -116,26 +116,4 @@ export class GameStartDto {
 
     @IsNumber()
     startTime: number;
-}
-
-export class PlayerInfoDataDto {
-    @IsString()
-    id: string;
-
-    @IsString()
-    @IsOptional()
-    name?: string;
-
-    @IsString()
-    @IsOptional()
-    avatar?: string;
-}
-
-export class PlayerInfoDto {
-    @IsString()
-    gameId: string;
-
-    @ValidateNested()
-    @Type(() => PlayerInfoDataDto)
-    playerInfo: PlayerInfoDataDto;
 } 
