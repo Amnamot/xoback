@@ -40,6 +40,8 @@ interface PlayerData {
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
   timestamp?: number;        // Временная метка последнего обновления
+  playerName?: string;       // Имя игрока
+  playerAvatar?: string;     // Аватар игрока
 }
 
 interface LobbyData {
@@ -172,7 +174,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Автоматически присоединяем к лобби
         const joinResult = await this.handleJoinLobby(client, {
           telegramId,
-          lobbyId: startParam
+          lobbyId: startParam,
+          playerName: client.handshake.query.playerName as string || 'Player',
+          playerAvatar: client.handshake.query.playerAvatar as string || '/src/media/JohnAva.png'
         });
         
         if (joinResult && joinResult.status === 'error') {
@@ -436,7 +440,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
-        newUser: isNewUser
+        newUser: isNewUser,
+        playerName: data.playerName,
+        playerAvatar: data.playerAvatar
       });
 
       await this.saveToRedis(`lobby:${lobby.id}`, {
@@ -487,8 +493,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
       
+      // Отправляем событие создания лобби с данными создателя
+      this.server.to(lobby.id).emit('lobbyCreated', {
+        lobbyId: lobby.id,
+        creator: {
+          telegramId: data.telegramId,
+          name: data.playerName,
+          avatar: data.playerAvatar
+        }
+      });
+
       return { 
-        status: 'created', 
+        status: 'success', 
         lobbyId: lobby.id,
         timestamp: Date.now()
       };
@@ -710,7 +726,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           lobbyId: data.lobbyId,
           role: 'opponent',
           marker: '⭕',
-          newUser: isNewUser
+          newUser: isNewUser,
+          playerName: data.playerName,
+          playerAvatar: data.playerAvatar
         };
         await this.saveToRedis(`player:${data.telegramId}`, opponentData);
 
@@ -855,6 +873,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             opponentInLobbies: this.clientLobbies.has(data.telegramId)
           },
           timestamp: new Date().toISOString()
+        });
+
+        // Отправляем событие присоединения к лобби с данными обоих игроков
+        this.server.to(data.lobbyId).emit('playerJoined', {
+          opponent: {
+            telegramId: data.telegramId,
+            name: data.playerName,
+            avatar: data.playerAvatar
+          }
         });
 
         return { 
