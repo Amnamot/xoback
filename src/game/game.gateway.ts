@@ -49,7 +49,7 @@ interface LobbyData {
   creatorId: string;
   opponentId?: string;
   status: 'pending' | 'active' | 'closed';
-  socketId: string;          // ID сокета, жестко связанный с лобби
+  socketIds: string[];          // Массив ID сокетов, подключенных к лобби
 }
 
 interface GameData {
@@ -222,23 +222,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             lobbyData,
             lobbyStatus: lobbyData.status,
             isCreator: lobbyData.creatorId === telegramId,
-            socketId: lobbyData.socketId,
+            socketIds: lobbyData.socketIds,
             currentSocketId: client.id,
             timestamp: new Date().toISOString()
           });
 
           // Проверяем и обновляем socketId
-          if (lobbyData.socketId && lobbyData.socketId !== client.id) {
+          if (lobbyData.socketIds.includes(client.id)) {
             console.log('🔄 [Socket] Updating socketId for lobby:', {
               lobbyId: playerData.lobbyId,
-              oldSocketId: lobbyData.socketId,
+              existingSocketId: lobbyData.socketIds,
               newSocketId: client.id,
               timestamp: new Date().toISOString()
             });
 
             await this.saveToRedis(`lobby:${playerData.lobbyId}`, {
               ...lobbyData,
-              socketId: client.id
+              socketIds: [...lobbyData.socketIds, client.id]
             });
           }
 
@@ -276,7 +276,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`game:${playerData.lobbyId}`);
 
             // Отправляем текущее состояние игры
-            client.emit('gameState', {
+            this.server.to(playerData.lobbyId).emit('gameState', {
               board: gameData.board,
               currentPlayer: gameData.currentTurn === telegramId ? 
                 (playerData.role === 'creator' ? 'X' : 'O') : 
@@ -446,12 +446,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         creatorId: data.telegramId,
         status: 'active',
         createdAt: Date.now(),
-        socketId: client.id
+        socketIds: [client.id]
       });
       
       console.log('🔌 [Socket] Saved socketId for lobby:', {
         lobbyId: lobby.id,
-        socketId: client.id,
+        socketIds: [client.id],
         timestamp: new Date().toISOString()
       });
       
@@ -486,7 +486,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('❌ [Create Lobby] Sent creator marker:', {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
-        socketId: client.id,
+        socketIds: [client.id],
         timestamp: new Date().toISOString()
       });
       
@@ -572,16 +572,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Обновляем socketId в данных лобби
       const currentLobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
       if (currentLobbyData) {
-        console.log('🔄 [Socket] Updating socketId on join:', {
+        console.log('🔄 [Socket] Adding socket to lobby:', {
           lobbyId: data.lobbyId,
-          oldSocketId: currentLobbyData.socketId,
+          existingSocketIds: currentLobbyData.socketIds,
           newSocketId: client.id,
           timestamp: new Date().toISOString()
         });
 
+        // Сохраняем оба socketId в Redis
         await this.saveToRedis(`lobby:${data.lobbyId}`, {
           ...currentLobbyData,
-          socketId: client.id
+          socketIds: [...currentLobbyData.socketIds, client.id]
         });
       }
 
@@ -651,7 +652,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`game:${data.lobbyId}`);
 
           // Отправляем текущее состояние игры
-          client.emit('gameState', {
+          this.server.to(data.lobbyId).emit('gameState', {
             board: gameData.board,
             currentPlayer: gameData.currentTurn === gameData.creatorId ? 'X' : 'O',
             scale: 1,
