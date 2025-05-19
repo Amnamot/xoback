@@ -228,10 +228,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           // Проверяем и обновляем socketId
-          if (lobbyData.socketIds.includes(client.id)) {
-            console.log('🔄 [Socket] Updating socketId for lobby:', {
+          if (!lobbyData.socketIds) {
+            console.log('⚠️ [Socket] No socketIds found, initializing:', {
               lobbyId: playerData.lobbyId,
-              existingSocketId: lobbyData.socketIds,
+              newSocketId: client.id,
+              timestamp: new Date().toISOString()
+            });
+            
+            await this.saveToRedis(`lobby:${playerData.lobbyId}`, {
+              ...lobbyData,
+              socketIds: [client.id]
+            });
+          } else if (!lobbyData.socketIds.includes(client.id)) {
+            console.log('🔄 [Socket] Adding new socketId to lobby:', {
+              lobbyId: playerData.lobbyId,
+              existingSocketIds: lobbyData.socketIds,
               newSocketId: client.id,
               timestamp: new Date().toISOString()
             });
@@ -729,7 +740,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const updatedLobbyData = {
           ...lobby,
           opponentId: data.telegramId,
-          status: 'closed'
+          status: 'closed',
+          socketIds: lobbyData.socketIds || [] // Сохраняем существующие socketIds
         };
         await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
 
