@@ -603,9 +603,10 @@ export class GameService {
       return null;
     }
   }
-
+// проверка на новый пользователь
   async isNewUser(telegramId: string): Promise<boolean> {
     try {
+      
       const user = await this.prisma.user.findUnique({
         where: { telegramId }
       });
