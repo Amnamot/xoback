@@ -1641,6 +1641,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('checkConnection')
+  async handleCheckConnection(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { telegramId: string, gameId: string }
+  ): Promise<void> {
+    try {
+      const { telegramId, gameId } = data;
+      
+      // Проверяем состояние в Redis
+      const playerData = await this.getFromRedis(`player:${telegramId}`);
+      const gameData = await this.getFromRedis(`game:${gameId}`);
+      
+      if (playerData && gameData) {
+        // Если данные существуют в Redis, соединение активно
+        client.emit('connectionState', { isConnected: true });
+      } else {
+        client.emit('connectionState', { isConnected: false });
+      }
+    } catch (error) {
+      console.error('Error checking connection state:', error);
+      client.emit('connectionState', { isConnected: false });
+    }
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
