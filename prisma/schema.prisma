@@ -1,0 +1,37 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id          Int      @id @default(autoincrement())
+  xoId        String   @unique
+  telegramId  String   @unique
+  userName    String
+  firstName   String
+  lastName    String
+  createdAt   DateTime @default(now())
+  lastVisit   DateTime
+  numGames    Int      @default(0)
+  numWins     Int      @default(0)
+  stars       Int      @default(0)
+}
+
+model Game {
+  id           Int      @id @default(autoincrement())
+  created      DateTime @default(now())
+  finished     DateTime
+  createdBy    String   // telegramId создателя
+  rival        String   // telegramId соперника
+  winner       String   // telegramId победителя
+  reason       String   // причина завершения игры
+  numMoves     Int
+  pay          Boolean
+  time         Int      // общее время игры в секундах
+  playertime1  Int      // время первого игрока
+  playertime2  Int      // время второго игрока
+}
