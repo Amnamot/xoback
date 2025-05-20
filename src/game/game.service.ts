@@ -3,7 +3,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 import { GameSession, Lobby } from './types';
-import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class GameService {
@@ -604,10 +603,9 @@ export class GameService {
       return null;
     }
   }
-// проверка на новый пользователь
+
   async isNewUser(telegramId: string): Promise<boolean> {
     try {
-      
       const user = await this.prisma.user.findUnique({
         where: { telegramId }
       });

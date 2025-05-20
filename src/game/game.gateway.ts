@@ -22,8 +22,7 @@ import {
   JoinGameDto,
   TimeExpiredDto,
   CreateInviteDto,
-  CancelLobbyDto,
-  PlayerInfoDto
+  CancelLobbyDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -1466,25 +1465,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return { lobbyId };
-  }
-
-  @SubscribeMessage('playerInfo')
-  @UsePipes(new ValidationPipe())
-  async handlePlayerInfo(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: PlayerInfoDto
-  ) {
-    console.log('👤 [Player Info] Received player info:', {
-      gameId: data.gameId,
-      playerInfo: data.playerInfo,
-      socketId: client.id,
-      timestamp: new Date().toISOString()
-    });
-
-    // Отправляем информацию о игроке всем участникам игры, кроме отправителя
-    client.to(data.gameId).emit('opponentInfo', data.playerInfo);
-
-    return { status: 'success' };
   }
 
   onModuleDestroy() {
