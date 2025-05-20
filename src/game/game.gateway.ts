@@ -842,7 +842,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Отправляем событие начала игры всем участникам
         this.server.to(data.lobbyId).emit('gameStart', { 
           session: gameSessionData,
-          gameData: gameSession
+          gameData: gameSession,
+          playerInfo: {
+            avatar: data.avatar || '/src/media/JohnAva.png',
+            name: data.name || 'Opponent'
+          }
         });
 
         console.log('🚀 [Game Start] Game session initialized:', {

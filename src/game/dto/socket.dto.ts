@@ -17,6 +17,14 @@ export class JoinLobbyDto {
 
     @IsString()
     telegramId: string;
+
+    @IsString()
+    @IsOptional()
+    avatar?: string;
+
+    @IsString()
+    @IsOptional()
+    name?: string;
 }
 
 export class PositionDto {
