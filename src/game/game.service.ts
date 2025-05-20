@@ -94,18 +94,41 @@ export class GameService {
   }
 
   async createLobby(creatorId: string): Promise<Lobby | null> {
-    console.log('🎯 Starting lobby creation for creator:', creatorId);
+    console.log('🎯 [CreateLobby] Starting lobby creation for creator:', {
+      creatorId,
+      timestamp: new Date().toISOString()
+    });
     
     try {
       // Проверяем rate limit
       const withinRateLimit = await this.checkRateLimit(creatorId);
       if (!withinRateLimit) {
-        console.warn('⚠️ Rate limit exceeded for creator:', creatorId);
+        console.warn('⚠️ [CreateLobby] Rate limit exceeded for creator:', {
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
         throw new Error('Please wait before creating another lobby');
       }
 
+      // Очищаем старые данные создателя
+      const oldLobbyId = await this.redis.get(`user_lobby:${creatorId}`);
+      if (oldLobbyId) {
+        console.log('🧹 [CreateLobby] Cleaning up old lobby data:', {
+          creatorId,
+          oldLobbyId,
+          timestamp: new Date().toISOString()
+        });
+        await this.redis.del(oldLobbyId);
+        await this.redis.del(`user_lobby:${creatorId}`);
+        this.activeLobbies.delete(oldLobbyId);
+      }
+
       // Пытаемся атомарно создать блокировку
-      console.log('🔒 Attempting to acquire lock for creator:', creatorId);
+      console.log('🔒 [CreateLobby] Attempting to acquire lock for creator:', {
+        creatorId,
+        timestamp: new Date().toISOString()
+      });
+
       const lockResult = await this.redis.set(
         `user_lobby:${creatorId}`,
         'pending',
@@ -115,27 +138,43 @@ export class GameService {
       );
 
       if (!lockResult) {
-        console.warn('⚠️ Creator already has an active lobby:', creatorId);
+        console.warn('⚠️ [CreateLobby] Creator already has an active lobby:', {
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
         
         // Проверяем существующее лобби
         const existingLobbyId = await this.redis.get(`user_lobby:${creatorId}`);
-        console.log('🔍 Found existing lobby:', existingLobbyId);
+        console.log('🔍 [CreateLobby] Found existing lobby:', {
+          existingLobbyId,
+          timestamp: new Date().toISOString()
+        });
         
         if (existingLobbyId && existingLobbyId !== 'pending') {
           const lobbyData = await this.redis.get(existingLobbyId);
           if (lobbyData) {
-            console.warn('⚠️ Active lobby exists:', { lobbyId: existingLobbyId, data: lobbyData });
+            console.warn('⚠️ [CreateLobby] Active lobby exists:', {
+              lobbyId: existingLobbyId,
+              data: lobbyData,
+              timestamp: new Date().toISOString()
+            });
           }
         }
         
         throw new Error('You already have an active lobby');
       }
 
-      console.log('✅ Lock acquired for creator:', creatorId);
+      console.log('✅ [CreateLobby] Lock acquired for creator:', {
+        creatorId,
+        timestamp: new Date().toISOString()
+      });
 
       try {
         const lobbyId = `lobby_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        console.log('📝 Generating new lobby:', lobbyId);
+        console.log('📝 [CreateLobby] Generating new lobby:', {
+          lobbyId,
+          timestamp: new Date().toISOString()
+        });
 
         const lobby: Lobby = {
           id: lobbyId,
@@ -149,19 +188,26 @@ export class GameService {
         multi.set(lobbyId, JSON.stringify(lobby), 'EX', 180);
         multi.set(`user_lobby:${creatorId}`, lobbyId, 'EX', 180);
         
-        console.log('💾 Executing Redis transaction for lobby creation');
+        console.log('💾 [CreateLobby] Executing Redis transaction for lobby creation');
         const results = await multi.exec();
         
         if (!results || results.some(result => !result[1])) {
-          console.error('❌ Redis transaction failed:', results);
+          console.error('❌ [CreateLobby] Redis transaction failed:', {
+            results,
+            timestamp: new Date().toISOString()
+          });
           throw new Error('Failed to create lobby: Redis transaction error');
         }
 
-        console.log('✅ Lobby successfully created in Redis:', { lobbyId, creatorId });
+        console.log('✅ [CreateLobby] Lobby successfully created in Redis:', {
+          lobbyId,
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
         
         // Сохраняем в памяти
         this.activeLobbies.set(lobbyId, lobby);
-        console.log('📦 Lobby saved in memory');
+        console.log('📦 [CreateLobby] Lobby saved in memory');
 
         // Верификация
         const [storedLobby, storedIndex] = await Promise.all([
@@ -169,22 +215,35 @@ export class GameService {
           this.redis.get(`user_lobby:${creatorId}`)
         ]);
         
-        console.log('🔍 Verification:', {
+        console.log('🔍 [CreateLobby] Verification:', {
           lobbyExists: !!storedLobby,
           indexExists: !!storedIndex,
-          indexMatches: storedIndex === lobbyId
+          indexMatches: storedIndex === lobbyId,
+          ttl: await this.redis.ttl(lobbyId),
+          timestamp: new Date().toISOString()
         });
 
         return lobby;
       } catch (error) {
         // При ошибке удаляем временную блокировку
-        console.error('❌ Error during lobby creation:', error);
+        console.error('❌ [CreateLobby] Error during lobby creation:', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
         await this.redis.del(`user_lobby:${creatorId}`);
-        console.log('🧹 Cleaned up temporary lock for creator:', creatorId);
+        console.log('🧹 [CreateLobby] Cleaned up temporary lock for creator:', {
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
         throw error;
       }
     } catch (error) {
-      console.error('❌ Lobby creation failed:', error);
+      console.error('❌ [CreateLobby] Lobby creation failed:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        creatorId,
+        timestamp: new Date().toISOString()
+      });
       throw error;
     }
   }
@@ -300,31 +359,32 @@ export class GameService {
 
   // Методы для работы с игровыми сессиями
   async createGameSession(lobbyId: string, opponentId: string, pay: boolean = false): Promise<GameSession> {
-    const lobby = this.activeLobbies.get(lobbyId);
-    if (!lobby) {
-      throw new Error('Lobby not found');
-    }
-
-    const session: GameSession = {
-      id: lobbyId, // используем тот же ID
-      creatorId: lobby.creatorId,
+    const now = Date.now();
+    const gameSession: GameSession = {
+      id: lobbyId,
+      creatorId: (await this.getLobby(lobbyId))?.creatorId || '',
       opponentId,
-      currentTurn: lobby.creatorId, // первый ход за создателем
-      board: Array(100).fill(null).map(() => Array(100).fill(null)), // 100x100 пустая доска
+      currentTurn: 'X',
+      board: Array(100).fill(null).map(() => Array(100).fill(null)),
       numMoves: 0,
       pay,
-      startedAt: Date.now(),
+      startedAt: now,
       playerTime1: 0,
       playerTime2: 0,
-      lastMoveTime: Date.now()
+      lastMoveTime: now
     };
 
-    this.activeSessions.set(session.id, session);
-    
-    // Удаляем лобби
-    await this.deleteLobby(lobbyId);
+    this.activeSessions.set(lobbyId, gameSession);
+    await this.saveToRedis(`game:${lobbyId}`, gameSession);
 
-    return session;
+    console.log('🎮 [GameService] Created new game session:', {
+      gameId: lobbyId,
+      creatorId: gameSession.creatorId,
+      opponentId,
+      startedAt: new Date(now).toISOString()
+    });
+
+    return gameSession;
   }
 
   getGameSession(gameId: string): GameSession | null {
@@ -342,67 +402,38 @@ export class GameService {
     return session;
   }
 
-  async getGameResult(gameId: string): Promise<{ 
-    winner: string;
-    reason: string;
-    statistics: {
-      totalTime: number;
-      moves: number;
-      playerTime1: number;
-      playerTime2: number;
-    };
-  } | null> {
-    try {
-      // Проверяем в БД
-      const game = await this.prisma.game.findFirst({
-        where: {
-          id: parseInt(gameId)
-        }
-      });
-
-      if (!game) return null;
-
-      return {
-        winner: game.winner,
-        reason: game.reason || 'unknown',
-        statistics: {
-          totalTime: game.time,
-          moves: game.numMoves,
-          playerTime1: game.playertime1,
-          playerTime2: game.playertime2
-        }
-      };
-    } catch (error) {
-      console.error('Error getting game result:', error);
-      return null;
-    }
-  }
-
   async endGameSession(gameId: string, winnerId: string, reason: string = 'unknown'): Promise<void> {
     const session = this.activeSessions.get(gameId);
     if (!session) {
       throw new Error('Game session not found');
     }
 
-    // Создаем запись в БД
-    const game = await this.prisma.game.create({
-      data: {
-        createdBy: session.creatorId,
-        rival: session.opponentId,
-        winner: winnerId,
-        reason: reason,
-        pay: session.pay,
-        numMoves: session.numMoves,
-        time: Math.floor((Date.now() - session.startedAt) / 1000),
-        playertime1: Math.floor(session.playerTime1 / 1000),
-        playertime2: Math.floor(session.playerTime2 / 1000),
-        created: new Date(session.startedAt),
-        finished: new Date()
-      }
-    });
+    try {
+      // Создаем запись в БД только при завершении игры
+      await this.prisma.game.create({
+        data: {
+          createdBy: session.creatorId,
+          rival: session.opponentId,
+          winner: winnerId,
+          reason: reason,
+          pay: session.pay,
+          numMoves: session.numMoves,
+          time: Math.floor((Date.now() - session.startedAt) / 1000),
+          playertime1: Math.floor(session.playerTime1 / 1000),
+          playertime2: Math.floor(session.playerTime2 / 1000),
+          created: new Date(session.startedAt),
+          finished: new Date()
+        }
+      });
 
-    // Удаляем сессию
-    this.activeSessions.delete(gameId);
+      // Удаляем сессию из памяти
+      this.activeSessions.delete(gameId);
+    } catch (error) {
+      console.error('Error saving game result:', error);
+      // Даже если сохранение в БД не удалось, все равно удаляем сессию
+      this.activeSessions.delete(gameId);
+      throw error;
+    }
   }
 
   // Добавляем метод для периодической проверки консистентности данных
@@ -434,22 +465,89 @@ export class GameService {
 
   async findLobbyByCreator(creatorId: string): Promise<Lobby | null> {
     try {
+      console.log('🔍 [FindLobby] Starting search for creator:', {
+        creatorId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Проверяем состояние Redis
+      const redisState = await Promise.all([
+        this.redis.keys('lobby_*'),
+        this.redis.keys('user_lobby:*'),
+        this.redis.keys('player:*')
+      ]);
+
+      console.log('📊 [FindLobby] Redis state:', {
+        lobbies: redisState[0],
+        userLobbies: redisState[1],
+        players: redisState[2],
+        timestamp: new Date().toISOString()
+      });
+
       // Сначала ищем в памяти
+      let latestLobby = null;
+      let latestTimestamp = 0;
+
       for (const [_, lobby] of this.activeLobbies) {
-        if (lobby.creatorId === creatorId) {
-          return lobby;
+        if (lobby.creatorId === creatorId && lobby.createdAt > latestTimestamp) {
+          latestLobby = lobby;
+          latestTimestamp = lobby.createdAt;
         }
       }
 
-      // Если не нашли в памяти, ищем через индекс в Redis
+      console.log('💾 [FindLobby] Memory search result:', {
+        foundInMemory: !!latestLobby,
+        lobbyId: latestLobby?.id,
+        timestamp: new Date().toISOString()
+      });
+
+      // Если нашли в памяти, проверяем актуальность в Redis
+      if (latestLobby) {
+        const lobbyData = await this.redis.get(latestLobby.id);
+        if (lobbyData) {
+          console.log('✅ [FindLobby] Found valid lobby in Redis:', {
+            lobbyId: latestLobby.id,
+            ttl: await this.redis.ttl(latestLobby.id),
+            timestamp: new Date().toISOString()
+          });
+
+          // Обновляем TTL для найденного лобби
+          await this.redis.expire(latestLobby.id, 180);
+          await this.redis.expire(`user_lobby:${creatorId}`, 180);
+          return latestLobby;
+        }
+        // Если в Redis нет, удаляем из памяти
+        console.log('⚠️ [FindLobby] Lobby not found in Redis, removing from memory:', {
+          lobbyId: latestLobby.id,
+          timestamp: new Date().toISOString()
+        });
+        this.activeLobbies.delete(latestLobby.id);
+      }
+
+      // Если не нашли в памяти или данные устарели, ищем через индекс в Redis
       const lobbyId = await this.redis.get(`user_lobby:${creatorId}`);
-      if (!lobbyId) return null;
+      console.log('🔍 [FindLobby] Redis index search:', {
+        foundLobbyId: lobbyId,
+        timestamp: new Date().toISOString()
+      });
+
+      if (!lobbyId) {
+        console.log('❌ [FindLobby] No lobby found for creator:', {
+          creatorId,
+          timestamp: new Date().toISOString()
+        });
+        return null;
+      }
 
       // Получаем данные лобби
       const lobbyData = await this.redis.get(lobbyId);
       if (!lobbyData) {
         // Очищаем неактуальный индекс
         await this.redis.del(`user_lobby:${creatorId}`);
+        console.log('❌ [FindLobby] No lobby data found for lobbyId:', {
+          lobbyId,
+          timestamp: new Date().toISOString()
+        });
         return null;
       }
 
@@ -458,22 +556,80 @@ export class GameService {
         // Проверяем TTL
         const ttl = await this.redis.ttl(lobbyId);
         
+        console.log('⏱️ [FindLobby] Checking lobby TTL:', {
+          lobbyId,
+          ttl,
+          timestamp: new Date().toISOString()
+        });
+
         // Если TTL истек или близок к истечению, считаем лобби недействительным
         if (ttl <= 0) {
+          console.log('❌ [FindLobby] Lobby TTL expired:', {
+            lobbyId,
+            timestamp: new Date().toISOString()
+          });
           await this.deleteLobby(lobbyId);
           return null;
         }
 
+        // Обновляем TTL для найденного лобби
+        await this.redis.expire(lobbyId, 180);
+        await this.redis.expire(`user_lobby:${creatorId}`, 180);
+
         // Сохраняем в память и возвращаем
         this.activeLobbies.set(lobby.id, lobby);
+        console.log('✅ [FindLobby] Found and updated lobby:', {
+          lobbyId: lobby.id,
+          creatorId: lobby.creatorId,
+          status: lobby.status,
+          ttl: await this.redis.ttl(lobbyId),
+          timestamp: new Date().toISOString()
+        });
         return lobby;
       } catch (error) {
-        console.error('❌ Error parsing lobby data:', error);
+        console.error('❌ [FindLobby] Error parsing lobby data:', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          lobbyId,
+          timestamp: new Date().toISOString()
+        });
         return null;
       }
     } catch (error) {
-      console.error('Error finding lobby by creator:', error);
+      console.error('❌ [FindLobby] Error finding lobby by creator:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        creatorId,
+        timestamp: new Date().toISOString()
+      });
       return null;
+    }
+  }
+
+  async isNewUser(telegramId: string): Promise<boolean> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { telegramId }
+      });
+      return !user; // true если пользователь не найден
+    } catch (error) {
+      console.error('Error checking user existence:', error);
+      return false; // в случае ошибки считаем пользователя существующим
+    }
+  }
+
+  private async saveToRedis(key: string, data: any) {
+    try {
+      await this.redis.set(key, JSON.stringify(data), 'EX', 180);
+      console.log('📝 [Redis] Saved data:', {
+        key,
+        type: key.split(':')[0],
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ [Redis] Error saving data:', {
+        key,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 } 

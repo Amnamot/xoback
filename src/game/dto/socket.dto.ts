@@ -108,4 +108,12 @@ export class CreateInviteDto {
 export class CancelLobbyDto {
     @IsString()
     telegramId: string;
+}
+
+export class GameStartDto {
+    @IsString()
+    gameId: string;
+
+    @IsNumber()
+    startTime: number;
 } 
