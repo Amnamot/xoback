@@ -863,8 +863,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           timestamp: new Date().toISOString()
         });
 
-        // Отправляем данные создателю
+        // Отправляем данные оппонента создателю
         if (creatorSocket) {
+          console.log('👤 [Game] Sending opponent info to creator:', {
+            creatorId: lobby.creatorId,
+            opponentId: data.telegramId,
+            opponentName: data.name,
+            opponentAvatar: data.avatar,
+            timestamp: new Date().toISOString()
+          });
           creatorSocket.emit('opponentInfo', {
             avatar: data.avatar,
             name: data.name
@@ -874,9 +881,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Получаем данные создателя и отправляем оппоненту
         const creatorData = await this.getFromRedis(`player:${lobby.creatorId}`);
         if (creatorData) {
+          const creatorInfo = JSON.parse(creatorData);
+          console.log('👤 [Game] Sending creator info to opponent:', {
+            creatorId: lobby.creatorId,
+            opponentId: data.telegramId,
+            creatorName: creatorInfo.name,
+            creatorAvatar: creatorInfo.avatar,
+            timestamp: new Date().toISOString()
+          });
           client.emit('opponentInfo', {
-            avatar: creatorData.avatar,
-            name: creatorData.name
+            avatar: creatorInfo.avatar,
+            name: creatorInfo.name
           });
         }
 
