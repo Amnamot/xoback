@@ -1467,6 +1467,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { lobbyId };
   }
 
+  @SubscribeMessage('playerInfo')
+  async handlePlayerInfo(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { gameId: string, playerInfo: { name: string, avatar: string } }
+  ) {
+    console.log('👤 [PlayerInfo] Received player info:', {
+      gameId: data.gameId,
+      playerInfo: data.playerInfo,
+      socketId: client.id,
+      timestamp: new Date().toISOString()
+    });
+
+    // Отправляем данные всем участникам игры кроме отправителя
+    client.to(data.gameId).emit('opponentInfo', data.playerInfo);
+    
+    return { status: 'success' };
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
