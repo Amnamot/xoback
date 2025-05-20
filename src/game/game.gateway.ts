@@ -949,7 +949,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.updateTTL(`player:${data.player}`);
     await this.updateTTL(`lobby:${data.gameId}`);
 
-    // Отправляем обновленное состояние игры с информацией о пользователе
     this.server.to(data.gameId).emit('moveMade', {
       moveId: `move_${currentTime}`,
       position: data.position,
@@ -959,8 +958,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         currentTurn: updatedGameData.currentTurn,
         serverTime: currentTime,
         moveStartTime: currentTime,
-        timeLeft: MAX_MOVE_TIME,
-        userInfo: data.userInfo
+        timeLeft: MAX_MOVE_TIME
       }
     });
 
