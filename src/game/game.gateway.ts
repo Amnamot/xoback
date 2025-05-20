@@ -40,6 +40,8 @@ interface PlayerData {
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
   timestamp?: number;        // Временная метка последнего обновления
+  avatar?: string;
+  name?: string;
 }
 
 interface LobbyData {
@@ -436,7 +438,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
-        newUser: isNewUser
+        newUser: isNewUser,
+        avatar: data.avatar,
+        name: data.name
       });
 
       await this.saveToRedis(`lobby:${lobby.id}`, {
@@ -710,7 +714,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           lobbyId: data.lobbyId,
           role: 'opponent',
           marker: '⭕',
-          newUser: isNewUser
+          newUser: isNewUser,
+          avatar: data.avatar,
+          name: data.name
         };
         await this.saveToRedis(`player:${data.telegramId}`, opponentData);
 
@@ -856,6 +862,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           },
           timestamp: new Date().toISOString()
         });
+
+        // Отправляем данные создателю
+        if (creatorSocket) {
+          creatorSocket.emit('opponentInfo', {
+            avatar: data.avatar,
+            name: data.name
+          });
+        }
+
+        // Получаем данные создателя и отправляем оппоненту
+        const creatorData = await this.getFromRedis(`player:${lobby.creatorId}`);
+        if (creatorData) {
+          client.emit('opponentInfo', {
+            avatar: creatorData.avatar,
+            name: creatorData.name
+          });
+        }
 
         return { 
           status: 'joined',
@@ -1472,12 +1495,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { telegramId: string, avatar: string, name: string }
   ) {
-    // Получаем данные о противнике
+    // Сохраняем данные игрока в Redis
     const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+    if (playerData) {
+      await this.saveToRedis(`player:${data.telegramId}`, {
+        ...playerData,
+        avatar: data.avatar,
+        name: data.name
+      });
+    }
+
+    // Если игрок в лобби, отправляем данные противнику
     if (playerData?.lobbyId) {
       const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
       if (lobbyData) {
-        // Отправляем информацию другому игроку
         const opponentId = data.telegramId === lobbyData.creatorId 
           ? lobbyData.opponentId 
           : lobbyData.creatorId;
