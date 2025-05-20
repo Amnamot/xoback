@@ -22,6 +22,12 @@ interface RequestWithInitData extends Request {
 export class LobbyController {
   constructor(private readonly lobbyService: LobbyService) {}
 
+  @Post('create')
+  @UseGuards(AuthGuard)
+  createLobby(@Req() req: RequestWithInitData) {
+    return this.lobbyService.createLobby(req.initData);
+  }
+
   @Post('createInvite')
   @UseGuards(AuthGuard)
   createInvite(@Req() req: RequestWithAuth) {

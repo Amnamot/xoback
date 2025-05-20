@@ -8,7 +8,6 @@ import { InjectRedis } from '@nestjs-modules/ioredis';
 import { randomBytes } from 'crypto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { GameService } from '../game/game.service';
 
 interface TelegramPreparedMessageResponse {
   ok: boolean;
@@ -24,23 +23,75 @@ export class LobbyService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @InjectRedis() private readonly redis: Redis,
-    private readonly httpService: HttpService,
-    private readonly gameService: GameService
+    private readonly httpService: HttpService
   ) {}
+
+  async createLobby(initData: InitDataParsed) {
+    const telegramId = initData.user?.id;
+    const firstName = initData.user?.first_name || 'Игрок';
+
+    if (!telegramId) {
+      throw new UnauthorizedException('Invalid Telegram ID');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { telegramId: telegramId.toString() },
+    });
+
+    if (!user) throw new NotFoundException("User not found");
+
+    const lobbyId = `lobby_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    await this.redis.set(lobbyId, telegramId.toString(), 'EX', 180);
+
+    const inviteUrl = `https://t.me/TacTicToe_bot?startapp=${lobbyId}`;
+
+    console.log('✅ Lobby successfully created in Redis');
+    console.log('📦 Lobby saved in memory');
+    console.log('📢 Lobby ready event emitted');
+
+    return { lobbyId, inviteUrl };
+  }
 
   async createInvite(tgId: string) {
     console.log('🔍 Creating invite for telegramId:', tgId);
     const user = await this.prisma.user.findUnique({ where: { telegramId: tgId.toString() } });
     const firstName = user?.firstName || "Gamer";
 
-    // Ищем лобби через GameService
-    const lobby = await this.gameService.findLobbyByCreator(tgId.toString());
-    if (!lobby) {
+    const keys = await this.redis.keys('lobby_*');
+    console.log('📋 Found Redis keys:', keys);
+    let lobbyId: string | null = null;
+
+    for (const key of keys) {
+      const value = await this.redis.get(key);
+      if (!value) continue;
+      
+      console.log(`🔑 Checking lobby ${key}:`, {
+        value,
+        expectedTgId: tgId.toString()
+      });
+      
+      try {
+        const lobbyData = JSON.parse(value);
+        console.log('📦 Parsed lobby data:', {
+          creatorId: lobbyData.creatorId,
+          matches: lobbyData.creatorId === tgId.toString()
+        });
+        
+        if (lobbyData.creatorId === tgId.toString()) {
+          lobbyId = key;
+          break;
+        }
+      } catch (error) {
+        console.error('❌ Error parsing lobby data:', error);
+      }
+    }
+
+    if (!lobbyId) {
       console.log('❌ No matching lobby found for telegramId:', tgId);
       throw new ForbiddenException('Lobby not found');
     }
 
-    console.log('✅ Found lobby:', lobby.id);
+    console.log('✅ Found lobby:', lobbyId);
 
     const result = {
       type: "article",
@@ -54,7 +105,7 @@ export class LobbyService {
         inline_keyboard: [[
           {
             text: "⚔️ Accept the battle 🛡",
-            url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+            url: `https://t.me/TacTicToe_bot?startapp=${lobbyId}`
           }
         ]]
       },
@@ -68,7 +119,7 @@ export class LobbyService {
     const url = `${apiUrl}?user_id=${tgId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
 
     const { data }: any = await firstValueFrom(this.httpService.get(url));
-    return { messageId: data.result.id, lobbyId: lobby.id };
+    return { messageId: data.result.id, lobbyId };
   }
 
   async cancelLobbyPublic(lobbyId: string, telegramId: string) {
@@ -81,11 +132,11 @@ export class LobbyService {
   }
 
   async joinLobby(tgId: string, lobbyId: string) {
-    const lobby = await this.gameService.getLobby(lobbyId);
-    if (!lobby) {
+    const ownerTgId = await this.redis.get(lobbyId);
+    if (!ownerTgId) {
       throw new NotFoundException('Lobby not found');
     }
-    if (lobby.creatorId === tgId.toString()) {
+    if (ownerTgId === tgId.toString()) {
       return { status: 'creator' };
     }
     return { success: true };
