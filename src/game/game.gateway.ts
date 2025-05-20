@@ -844,7 +844,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           session: gameSessionData,
           gameData: gameSession,
           playerInfo: {
-            avatar: data.avatar || './media/JohnAva.png',
+            avatar: data.avatar || '/src/media/JohnAva.png',
             name: data.name || 'Opponent'
           }
         });
@@ -852,6 +852,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         console.log('🚀 [Game Start] Game session initialized:', {
           lobbyId: data.lobbyId,
           session: gameSessionData,
+          playerInfo: {
+            avatar: data.avatar || '/src/media/JohnAva.png',
+            name: data.name || 'Opponent'
+          },
           mappings: {
             creatorInGames: this.clientGames.has(lobby.creatorId),
             opponentInGames: this.clientGames.has(data.telegramId),
