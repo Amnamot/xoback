@@ -40,6 +40,19 @@ export class MakeMoveDto {
 
     @IsNumber()
     moveTime: number;
+
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => UserInfoDto)
+    userInfo?: UserInfoDto;
+}
+
+export class UserInfoDto {
+    @IsString()
+    name: string;
+
+    @IsString()
+    avatar: string;
 }
 
 export class PlayerTimesDto {
