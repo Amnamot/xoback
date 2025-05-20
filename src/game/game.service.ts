@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 import { GameSession, Lobby } from './types';
+import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class GameService {
