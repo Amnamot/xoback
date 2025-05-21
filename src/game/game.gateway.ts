@@ -736,21 +736,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           timestamp: new Date().toISOString()
         });
 
+        // Формируем roomId на основе lobbyId
+        const roomId = data.lobbyId.replace(/^lobby/, 'room');
+
         // Создаем игровую сессию
         const gameSession = await this.gameService.createGameSession(
-          data.lobbyId,
+          roomId, // теперь id игровой сессии = roomId
           data.telegramId
         );
 
         // Отправляем событие начала игры
-        this.server.to(data.lobbyId).emit('gameStart', {
+        this.server.to(roomId).emit('gameStart', {
           gameId: gameSession.id,
           startTime: gameSession.startedAt
         });
 
         // Отправляем начальное состояние игры
         const MAX_MOVE_TIME = 30000;
-        this.server.to(data.lobbyId).emit('gameState', {
+        this.server.to(roomId).emit('gameState', {
           board: gameSession.board,
           currentPlayer: gameSession.currentTurn,
           scale: 1,
@@ -768,30 +771,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         });
 
-        // Подключаем оппонента к игре
-        client.join(data.lobbyId);
-        this.clientGames.set(data.telegramId, data.lobbyId);
+        // Присоединяем игроков к игровой комнате
+        client.join(roomId);
+        this.clientGames.set(data.telegramId, roomId);
         this.clientLobbies.delete(data.telegramId);
 
-        // Подключаем создателя к игре
         const creatorSocket = this.connectedClients.get(lobby.creatorId);
         if (creatorSocket) {
-          console.log('🎮 [Join] Connecting creator to game:', {
-            lobbyId: data.lobbyId,
-            creatorId: lobby.creatorId,
-            timestamp: new Date().toISOString()
-          });
-
-          // Переводим создателя из лобби в игру
           this.clientLobbies.delete(lobby.creatorId);
-          this.clientGames.set(lobby.creatorId, data.lobbyId);
-
-          // Обновляем TTL для всех ключей
+          this.clientGames.set(lobby.creatorId, roomId);
           await this.updateTTL(`player:${lobby.creatorId}`);
           await this.updateTTL(`player:${data.telegramId}`);
-          await this.updateTTL(`game:${data.lobbyId}`);
+          await this.updateTTL(`game:${roomId}`);
           await this.updateTTL(`lobby:${data.lobbyId}`);
-
+          creatorSocket.join(roomId);
           // Отправляем создателю состояние игры
           creatorSocket.emit('gameState', {
             board: gameSession.board,
@@ -807,7 +800,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             gameSession: {
               id: gameSession.id,
               creatorId: gameSession.creatorId,
-              opponentId: gameSession.opponentId
+              opponentId: gameSession.opponentId,
+              lobbyId: data.lobbyId // сохраняем связь
             }
           });
         }
@@ -827,34 +821,37 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           gameSession: {
             id: gameSession.id,
             creatorId: gameSession.creatorId,
-            opponentId: gameSession.opponentId
+            opponentId: gameSession.opponentId,
+            lobbyId: data.lobbyId // сохраняем связь
           }
         });
 
         // Формируем данные игровой сессии
         const gameSessionData = {
-          id: data.lobbyId,
+          id: roomId,
           creatorId: lobby.creatorId,
           opponentId: data.telegramId,
+          lobbyId: data.lobbyId,
           timestamp: Date.now()
         };
 
         // Отправляем событие начала игры всем участникам
-        this.server.to(data.lobbyId).emit('gameStart', { 
+        this.server.to(roomId).emit('gameStart', { 
           session: gameSessionData,
           gameData: gameSession,
           playerInfo: {
-            avatar: data.avatar || '/src/media/JohnAva.png',
-            name: data.name || 'Opponent'
+            ...(data.avatar ? { avatar: data.avatar } : {}),
+            ...(data.name ? { name: data.name } : {})
           }
         });
 
         console.log('🚀 [Game Start] Game session initialized:', {
           lobbyId: data.lobbyId,
+          roomId,
           session: gameSessionData,
           playerInfo: {
-            avatar: data.avatar || '/src/media/JohnAva.png',
-            name: data.name || 'Opponent'
+            ...(data.avatar ? { avatar: data.avatar } : {}),
+            ...(data.name ? { name: data.name } : {})
           },
           mappings: {
             creatorInGames: this.clientGames.has(lobby.creatorId),
@@ -864,6 +861,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           },
           timestamp: new Date().toISOString()
         });
+
+        client.leave(data.lobbyId);
+        if (creatorSocket) {
+          creatorSocket.leave(data.lobbyId);
+        }
 
         return { 
           status: 'joined',
