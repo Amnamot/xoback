@@ -49,8 +49,7 @@ export class UserController {
       telegramId: id.toString(),
       firstName,
       lastName,
-      userName,
-      avatar,
+      userName
     });
   }
 }
