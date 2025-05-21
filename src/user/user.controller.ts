@@ -10,12 +10,15 @@ import {
 import { UserService } from './user.service';
 import { UpsertUserDto } from './dto/upsert-user.dto';
 import { InitDataService } from '../utils/init-data.service';
+import { InjectRedis } from '@nestjs-modules/ioredis';
+import Redis from 'ioredis';
 
 @Controller('user')
 export class UserController {
   constructor(
     private readonly userService: UserService,
     private readonly initDataService: InitDataService,
+    @InjectRedis() private readonly redis: Redis
   ) {}
 
   @Get()
@@ -45,11 +48,29 @@ export class UserController {
       photo_url: avatar = '',
     } = user;
 
-    return this.userService.upsertUser({
+    // 1. Сохраняем пользователя в БД
+    const dbUser = await this.userService.upsertUser({
       telegramId: id.toString(),
       firstName,
       lastName,
       userName
     });
+
+    // 2. Обновляем Redis
+    const redisKey = `player:${id}`;
+    let playerData: any = {};
+    try {
+      const existing = await this.redis.get(redisKey);
+      if (existing) {
+        playerData = JSON.parse(existing);
+      }
+    } catch (e) {
+      playerData = {};
+    }
+    playerData.name = firstName;
+    playerData.avatar = avatar;
+    await this.redis.set(redisKey, JSON.stringify(playerData), 'EX', 180);
+
+    return dbUser;
   }
 }
