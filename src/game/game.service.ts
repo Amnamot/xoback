@@ -360,9 +360,12 @@ export class GameService {
   // Методы для работы с игровыми сессиями
   async createGameSession(lobbyId: string, opponentId: string, pay: boolean = false): Promise<GameSession> {
     const now = Date.now();
+    // Исправление: всегда ищем лобби по ключу с префиксом 'lobby_'
+    const lobbyKey = lobbyId.replace(/^room_/, 'lobby_');
+    const creatorId = (await this.getLobby(lobbyKey))?.creatorId || '';
     const gameSession: GameSession = {
       id: lobbyId,
-      creatorId: (await this.getLobby(lobbyId))?.creatorId || '',
+      creatorId,
       opponentId,
       currentTurn: 'X',
       board: Array(100).fill(null).map(() => Array(100).fill(null)),
