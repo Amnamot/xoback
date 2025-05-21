@@ -737,6 +737,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           opponentId: data.telegramId,
           status: 'closed'
         };
+        console.log('[DEBUG][LOBBY STATUS] Меняем статус лобби на closed:', {
+          lobbyId: data.lobbyId,
+          prevStatus: lobby.status,
+          newStatus: 'closed',
+          updatedLobbyData,
+          calledFrom: 'handleJoinLobby/opponent',
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
         await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
 
         console.log('📝 [Opponent Join] Updated lobby data:', {
