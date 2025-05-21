@@ -71,6 +71,22 @@ export class UserController {
     playerData.avatar = avatar;
     await this.redis.set(redisKey, JSON.stringify(playerData), 'EX', 180);
 
+    // Логируем содержимое Redis после записи
+    const redisValue = await this.redis.get(redisKey);
+    let parsedValue = null;
+    try {
+      parsedValue = JSON.parse(redisValue || '{}');
+    } catch (e) {
+      parsedValue = redisValue;
+    }
+    console.log('📝 [UserController] Player data in Redis после /user/init:', {
+      telegramId: id,
+      name: firstName,
+      avatar,
+      redisValue: parsedValue,
+      timestamp: new Date().toISOString()
+    });
+
     return dbUser;
   }
 }
