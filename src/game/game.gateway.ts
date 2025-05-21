@@ -93,21 +93,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // Методы для работы с Redis
-  private async saveToRedis(key: string, data: any) {
-    try {
-      await this.redis.set(key, JSON.stringify(data), 'EX', 180);
-      console.log('📝 [Redis] Saved data:', {
-        key,
-        type: key.split(':')[0],
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('❌ [Redis] Error saving data:', {
-        key,
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
+  async saveToRedis(key: string, value: any, ttlSeconds: number = 180) {
+    await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
+    console.log('📝 [Redis] Saved data:', { key, value, ttl: ttlSeconds, timestamp: new Date().toISOString() });
   }
 
   private async getFromRedis(key: string) {
@@ -1521,10 +1509,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const opponentData = await this.getFromRedis(`player:${opponentId}`);
     if (!opponentData) return { error: 'No opponent data' };
 
-    return {
+    const result = {
       name: opponentData.name || 'Opponent',
       avatar: opponentData.avatar || null
     };
+    console.log('🟢 [getOpponentInfo] Returning opponent data:', { telegramId: data.telegramId, opponentId, result, timestamp: new Date().toISOString() });
+    return result;
   }
 
   onModuleDestroy() {
