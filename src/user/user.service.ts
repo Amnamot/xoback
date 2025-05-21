@@ -45,6 +45,7 @@ export class UserService {
           firstName: dto.firstName ?? '',
           lastName: dto.lastName ?? '',
           userName: dto.userName ?? '',
+          avatar: dto.avatar ?? '',
           lastVisit: new Date(),
         },
       });
@@ -56,6 +57,7 @@ export class UserService {
           firstName: dto.firstName ?? '',
           lastName: dto.lastName ?? '',
           userName: dto.userName ?? '',
+          avatar: dto.avatar ?? '',
           xoId: xoId,
           createdAt: new Date(),
           lastVisit: new Date(),
@@ -74,6 +76,7 @@ export class UserService {
         numGames: true,
         numWins: true,
         stars: true,
+        avatar: true,
       },
     });
   }

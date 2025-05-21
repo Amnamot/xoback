@@ -29,6 +29,7 @@ import { firstValueFrom } from 'rxjs';
 import { randomBytes } from 'crypto';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
+import { InitDataService } from '../utils/init-data.service';
 
 // Интерфейсы для Redis
 interface PlayerData {
@@ -40,6 +41,8 @@ interface PlayerData {
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
   timestamp?: number;        // Временная метка последнего обновления
+  name?: string;            // Имя игрока из initData (firstName)
+  avatar?: string;          // Аватар игрока из initData (photo_url)
 }
 
 interface LobbyData {
@@ -82,6 +85,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
     @InjectRedis() private readonly redis: Redis,
+    private readonly initDataService: InitDataService
   ) {
     console.log('WebSocket URL:', this.configService.get('SOCKET_URL'));
     
@@ -274,20 +278,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             // Отправляем текущее состояние игры
             client.emit('gameState', {
-              board: gameData.board,
-              currentPlayer: gameData.currentTurn === telegramId ? 
+              board: gameData?.board || Array(9).fill(''),
+              currentPlayer: gameData?.currentTurn === telegramId ? 
                 (playerData.role === 'creator' ? 'X' : 'O') : 
                 (playerData.role === 'creator' ? 'O' : 'X'),
               scale: 1,
               position: { x: 0, y: 0 },
               time: 0,
-              gameData
+              gameData: gameData || { board: Array(9).fill('') }
             });
 
             console.log('✅ [State Restore] Game state sent:', {
               telegramId,
               lobbyId: playerData.lobbyId,
-              currentPlayer: gameData.currentTurn === telegramId,
+              currentPlayer: gameData?.currentTurn === telegramId,
               timestamp: new Date().toISOString()
             });
           } else if (playerData.inviteSent || lobbyData.status === 'pending') {
@@ -1385,6 +1389,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.data = { ...client.data, lastState: data.state };
 
     try {
+      // Если это состояние loader, сохраняем данные пользователя в Redis
+      if (data.state === 'loader') {
+        const { user } = this.initDataService.parseInitData(client.handshake.query.initData as string);
+        if (user) {
+          await this.saveToRedis(`player:${data.telegramId}`, {
+            name: user.first_name,
+            avatar: user.photo_url
+          });
+          console.log('✅ [WebApp] Saved user data to Redis:', {
+            telegramId: data.telegramId,
+            name: user.first_name,
+            avatar: user.photo_url,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
       // Получаем данные игрока
       const playerData = await this.getFromRedis(`player:${data.telegramId}`);
       

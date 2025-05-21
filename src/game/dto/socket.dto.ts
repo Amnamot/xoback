@@ -9,6 +9,14 @@ export class ConnectDto {
 export class CreateLobbyDto {
     @IsString()
     telegramId: string;
+
+    @IsString()
+    @IsOptional()
+    name?: string;
+
+    @IsString()
+    @IsOptional()
+    avatar?: string;
 }
 
 export class JoinLobbyDto {

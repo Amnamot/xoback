@@ -42,6 +42,7 @@ export class UserController {
       first_name: firstName,
       last_name: lastName = '',
       username: userName = '',
+      photo_url: avatar = '',
     } = user;
 
     return this.userService.upsertUser({
@@ -49,6 +50,7 @@ export class UserController {
       firstName,
       lastName,
       userName,
+      avatar,
     });
   }
 }
