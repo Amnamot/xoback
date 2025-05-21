@@ -1227,8 +1227,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.saveToRedis(`player:${data.telegramId}`, {
         ...existingPlayerData, // сохраняем существующие данные (имя и аватар)
         lobbyId: lobby.id,
-        role: 'opponent',
-        marker: '⭕',
+        role: 'creator',
+        marker: '❌',
         newUser: isNewUser
       });
 
