@@ -1498,6 +1498,35 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { lobbyId };
   }
 
+  @SubscribeMessage('getOpponentInfo')
+  async handleGetOpponentInfo(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { telegramId: string }
+  ) {
+    const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+    if (!playerData?.lobbyId) return { error: 'No lobby found' };
+
+    const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
+    if (!lobbyData) return { error: 'No lobby data' };
+
+    let opponentId: string | undefined;
+    if (lobbyData.creatorId === data.telegramId) {
+      opponentId = lobbyData.opponentId;
+    } else {
+      opponentId = lobbyData.creatorId;
+    }
+
+    if (!opponentId) return { error: 'No opponent yet' };
+
+    const opponentData = await this.getFromRedis(`player:${opponentId}`);
+    if (!opponentData) return { error: 'No opponent data' };
+
+    return {
+      name: opponentData.name || 'Opponent',
+      avatar: opponentData.avatar || null
+    };
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);

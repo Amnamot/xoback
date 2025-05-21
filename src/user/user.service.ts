@@ -73,7 +73,7 @@ export class UserService {
         firstName: true,
         numGames: true,
         numWins: true,
-        stars: true
+        stars: true,
       },
     });
   }
