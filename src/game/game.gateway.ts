@@ -753,14 +753,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           timestamp: new Date().toISOString()
         });
 
-        await this.saveToRedis(`player:${data.telegramId}`, {
+        // Корректный merge: не затираем name/avatar, если они не переданы
+        const mergedOpponentData = {
           ...existingOpponentData,
           lobbyId: data.lobbyId,
           role: 'opponent',
-          marker: '⭕',
-          name: data.name,
-          avatar: data.avatar
-        });
+          marker: '⭕'
+        };
+        if (data.name !== undefined) mergedOpponentData.name = data.name;
+        if (data.avatar !== undefined) mergedOpponentData.avatar = data.avatar;
+
+        await this.saveToRedis(`player:${data.telegramId}`, mergedOpponentData);
 
         console.log('✅ [JoinLobby] Updated opponent data:', {
           telegramId: data.telegramId,
