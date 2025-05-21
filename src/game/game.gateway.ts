@@ -198,8 +198,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           timestamp: new Date().toISOString()
         });
         
-        // Очищаем старые данные
-        await this.redis.del(`player:${telegramId}`);
+        // Удаляем только lobby:${telegramId}, НЕ удаляем player:${telegramId}
         await this.redis.del(`lobby:${telegramId}`);
         
         // Автоматически присоединяем к лобби
