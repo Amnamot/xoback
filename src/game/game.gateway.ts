@@ -751,7 +751,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           ...existingOpponentData,
           lobbyId: data.lobbyId,
           role: 'opponent',
-          marker: '⭕'
+          marker: '⭕',
+          name: data.name,
+          avatar: data.avatar
         });
 
         console.log('✅ [JoinLobby] Updated opponent data:', {
