@@ -154,9 +154,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (initData) {
         const { user } = this.initDataService.parseInitData(initData);
         if (user) {
+          const existingData = await this.getFromRedis(`player:${telegramId}`);
           console.log('📝 [Connection] Parsing initData:', {
             telegramId,
-            userData: {
+            existingData,
+            newData: {
               first_name: user.first_name,
               photo_url: user.photo_url
             },
@@ -164,13 +166,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           await this.saveToRedis(`player:${telegramId}`, {
+            ...existingData,
             name: user.first_name,
             avatar: user.photo_url
           });
           console.log('✅ [Connection] Saved user data to Redis:', {
             telegramId,
-            name: user.first_name,
-            avatar: user.photo_url,
+            existingData,
+            newData: {
+              name: user.first_name,
+              avatar: user.photo_url
+            },
             timestamp: new Date().toISOString()
           });
 
@@ -1440,14 +1446,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (data.state === 'loader') {
         const { user } = this.initDataService.parseInitData(client.handshake.query.initData as string);
         if (user) {
+          const existingData = await this.getFromRedis(`player:${data.telegramId}`);
           await this.saveToRedis(`player:${data.telegramId}`, {
+            ...existingData,
             name: user.first_name,
             avatar: user.photo_url
           });
           console.log('✅ [WebApp] Saved user data to Redis:', {
             telegramId: data.telegramId,
-            name: user.first_name,
-            avatar: user.photo_url,
+            existingData,
+            newData: {
+              name: user.first_name,
+              avatar: user.photo_url
+            },
             timestamp: new Date().toISOString()
           });
         }
