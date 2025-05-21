@@ -154,6 +154,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (initData) {
         const { user } = this.initDataService.parseInitData(initData);
         if (user) {
+          console.log('📝 [Connection] Parsing initData:', {
+            telegramId,
+            userData: {
+              first_name: user.first_name,
+              photo_url: user.photo_url
+            },
+            timestamp: new Date().toISOString()
+          });
+
           await this.saveToRedis(`player:${telegramId}`, {
             name: user.first_name,
             avatar: user.photo_url
@@ -162,6 +171,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             telegramId,
             name: user.first_name,
             avatar: user.photo_url,
+            timestamp: new Date().toISOString()
+          });
+
+          // Проверяем сохранение
+          const savedData = await this.getFromRedis(`player:${telegramId}`);
+          console.log('🔍 [Connection] Verification of saved data:', {
+            telegramId,
+            savedData,
             timestamp: new Date().toISOString()
           });
         }
@@ -419,9 +436,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     
     try {
-      // Проверяем, является ли пользователь новым
-      const isNewUser = await this.gameService.isNewUser(data.telegramId);
-      
       // Создание лобби через GameService
       const lobby = await this.gameService.createLobby(data.telegramId);
       
@@ -438,15 +452,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id, 
         creatorId: data.telegramId,
         status: lobby.status,
-        isNewUser
+        isNewUser: true
       });
       
       // Сохраняем данные в Redis
+      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
+      const isNewUser = !existingPlayerData;
+      console.log('🔍 [CreateLobby] Existing player data:', {
+        telegramId: data.telegramId,
+        existingData: existingPlayerData,
+        timestamp: new Date().toISOString()
+      });
+
       await this.saveToRedis(`player:${data.telegramId}`, {
+        ...existingPlayerData,
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
         newUser: isNewUser
+      });
+
+      console.log('✅ [CreateLobby] Updated player data:', {
+        telegramId: data.telegramId,
+        newData: await this.getFromRedis(`player:${data.telegramId}`),
+        timestamp: new Date().toISOString()
       });
 
       await this.saveToRedis(`lobby:${lobby.id}`, {
@@ -540,9 +569,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     try {
-      // Проверяем, является ли пользователь новым
-      const isNewUser = await this.gameService.isNewUser(data.telegramId);
-      
       // Получаем данные лобби
       const lobby = await this.gameService.getLobby(data.lobbyId);
       
@@ -613,7 +639,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         console.log('🎮 [Creator Join] Creator joining attempt:', {
           lobbyId: lobby.id,
           creatorId: data.telegramId,
-          isNewUser,
           socketState: {
             connected: creatorSocket?.connected || false,
             rooms: Array.from(creatorSocket?.rooms || []),
@@ -694,7 +719,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('👥 [Opponent Join] Processing join request:', {
         lobbyId: data.lobbyId,
         opponentId: data.telegramId,
-        isNewUser,
         lobbyData,
         timestamp: new Date().toISOString()
       });
@@ -716,18 +740,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Если это приглашенный игрок, устанавливаем роль opponent
       if (isInvited && !isCreator) {
         // Сохраняем данные оппонента в Redis
-        const opponentData = {
+        const existingOpponentData = await this.getFromRedis(`player:${data.telegramId}`);
+        console.log('🔍 [JoinLobby] Existing opponent data:', {
+          telegramId: data.telegramId,
+          existingData: existingOpponentData,
+          timestamp: new Date().toISOString()
+        });
+
+        await this.saveToRedis(`player:${data.telegramId}`, {
+          ...existingOpponentData,
           lobbyId: data.lobbyId,
           role: 'opponent',
-          marker: '⭕',
-          newUser: isNewUser
-        };
-        await this.saveToRedis(`player:${data.telegramId}`, opponentData);
+          marker: '⭕'
+        });
 
-        console.log('✅ [Opponent Join] Saved opponent data:', {
-          lobbyId: data.lobbyId,
-          opponentId: data.telegramId,
-          opponentData,
+        console.log('✅ [JoinLobby] Updated opponent data:', {
+          telegramId: data.telegramId,
+          newData: await this.getFromRedis(`player:${data.telegramId}`),
           timestamp: new Date().toISOString()
         });
 
@@ -1183,13 +1212,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Сохраняем данные в Redis
+      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
+      const isNewUser = !existingPlayerData;
       await this.saveToRedis(`player:${data.telegramId}`, {
+        ...existingPlayerData, // сохраняем существующие данные (имя и аватар)
         lobbyId: lobby.id,
-        role: 'creator',
-        marker: '❌',
-        inviteSent: true,
-        lastAction: 'invite_sent',
-        timestamp: Date.now()
+        role: 'opponent',
+        marker: '⭕',
+        newUser: isNewUser
       });
 
       // Проверяем членство в комнате после сохранения в Redis
