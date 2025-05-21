@@ -476,10 +476,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         marker: '❌',
         newUser: isNewUser
       });
-
-      console.log('✅ [CreateLobby] Updated player data:', {
+      console.log('[DEBUG][PLAYER SAVE]', {
         telegramId: data.telegramId,
-        newData: await this.getFromRedis(`player:${data.telegramId}`),
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: '❌',
+        source: 'handleCreateLobby',
         timestamp: new Date().toISOString()
       });
 
@@ -763,10 +765,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (data.avatar !== undefined) mergedOpponentData.avatar = data.avatar;
 
         await this.saveToRedis(`player:${data.telegramId}`, mergedOpponentData);
-
-        console.log('✅ [JoinLobby] Updated opponent data:', {
+        console.log('[DEBUG][PLAYER SAVE]', {
           telegramId: data.telegramId,
-          newData: await this.getFromRedis(`player:${data.telegramId}`),
+          lobbyId: data.lobbyId,
+          role: mergedOpponentData.role,
+          marker: mergedOpponentData.marker,
+          source: 'handleJoinLobby',
           timestamp: new Date().toISOString()
         });
 
@@ -1225,11 +1229,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
       const isNewUser = !existingPlayerData;
       await this.saveToRedis(`player:${data.telegramId}`, {
-        ...existingPlayerData, // сохраняем существующие данные (имя и аватар)
+        ...existingPlayerData,
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
         newUser: isNewUser
+      });
+      console.log('[DEBUG][PLAYER SAVE]', {
+        telegramId: data.telegramId,
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: '❌',
+        source: 'handleCreateInvite',
+        timestamp: new Date().toISOString()
       });
 
       // Проверяем членство в комнате после сохранения в Redis
