@@ -149,6 +149,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
+      // Сохраняем данные пользователя из initData
+      const initData = client.handshake.query.initData as string;
+      if (initData) {
+        const { user } = this.initDataService.parseInitData(initData);
+        if (user) {
+          await this.saveToRedis(`player:${telegramId}`, {
+            name: user.first_name,
+            avatar: user.photo_url
+          });
+          console.log('✅ [Connection] Saved user data to Redis:', {
+            telegramId,
+            name: user.first_name,
+            avatar: user.photo_url,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
       // Если есть start_param и он не undefined, значит это приглашенный игрок
       if (startParam && startParam !== 'undefined') {
         console.log('🧹 [Connection] Processing invited player:', {
