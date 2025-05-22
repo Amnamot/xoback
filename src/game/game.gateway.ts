@@ -250,7 +250,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             lobbyId: playerData.lobbyId,
             lobbyData,
             lobbyStatus: lobbyData.status,
-            isCreator: Number(lobbyData.creatorId) === Number(telegramId),
+            isCreator: String(lobbyData.creatorId) === String(telegramId),
             socketId: lobbyData.socketId,
             currentSocketId: client.id,
             timestamp: new Date().toISOString()
@@ -412,7 +412,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Устанавливаем таймаут на переподключение
         const timeout = setTimeout(async () => {
           // Если игрок не переподключился за 30 секунд, завершаем игру
-          const winnerId = Number(session.creatorId) === Number(telegramId) ? session.opponentId : session.creatorId;
+          const winnerId = String(session.creatorId) === String(telegramId) ? session.opponentId : session.creatorId;
           await this.gameService.endGameSession(gameId, winnerId);
           this.server.to(gameId).emit('gameEnded', {
             winner: winnerId,
@@ -626,7 +626,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       // Определяем роль игрока
-      const isCreator = Number(lobby.creatorId) === Number(data.telegramId);
+      const isCreator = String(lobby.creatorId) === String(data.telegramId);
       const isInvited = Boolean(startParam);
 
       console.log('👥 [Join] Role determination:', {
@@ -1586,7 +1586,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!lobbyData) return { error: 'No lobby data' };
 
     let opponentId: string | undefined;
-    if (Number(lobbyData.creatorId) === Number(data.telegramId)) {
+    if (String(lobbyData.creatorId) === String(data.telegramId)) {
       opponentId = lobbyData.opponentId;
     } else {
       opponentId = lobbyData.creatorId;
