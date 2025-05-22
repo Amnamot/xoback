@@ -25,7 +25,7 @@ export class GameService {
   private async checkLobbyLimit(telegramId: string): Promise<boolean> {
     // Проверяем существующие лобби пользователя в памяти
     for (const [_, lobby] of this.activeLobbies) {
-      if (lobby.creatorId === telegramId && lobby.status === 'active') {
+      if (Number(lobby.creatorId) === Number(telegramId) && lobby.status === 'active') {
         return false;
       }
     }
@@ -489,7 +489,7 @@ export class GameService {
       let latestTimestamp = 0;
 
       for (const [_, lobby] of this.activeLobbies) {
-        if (lobby.creatorId === creatorId && lobby.createdAt > latestTimestamp) {
+        if (Number(lobby.creatorId) === Number(creatorId) && lobby.createdAt > latestTimestamp) {
           latestLobby = lobby;
           latestTimestamp = lobby.createdAt;
         }

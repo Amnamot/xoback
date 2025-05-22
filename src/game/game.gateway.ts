@@ -250,7 +250,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             lobbyId: playerData.lobbyId,
             lobbyData,
             lobbyStatus: lobbyData.status,
-            isCreator: lobbyData.creatorId === telegramId,
+            isCreator: Number(lobbyData.creatorId) === Number(telegramId),
             socketId: lobbyData.socketId,
             currentSocketId: client.id,
             timestamp: new Date().toISOString()
@@ -412,7 +412,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Устанавливаем таймаут на переподключение
         const timeout = setTimeout(async () => {
           // Если игрок не переподключился за 30 секунд, завершаем игру
-          const winnerId = session.creatorId === telegramId ? session.opponentId : session.creatorId;
+          const winnerId = Number(session.creatorId) === Number(telegramId) ? session.opponentId : session.creatorId;
           await this.gameService.endGameSession(gameId, winnerId);
           this.server.to(gameId).emit('gameEnded', {
             winner: winnerId,
@@ -626,7 +626,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       // Определяем роль игрока
-      const isCreator = lobby.creatorId === data.telegramId;
+      const isCreator = Number(lobby.creatorId) === Number(data.telegramId);
       const isInvited = Boolean(startParam);
 
       console.log('👥 [Join] Role determination:', {
@@ -692,7 +692,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           // Отправляем текущее состояние игры
           client.emit('gameState', {
             board: gameData.board,
-            currentPlayer: gameData.currentTurn === gameData.creatorId ? 'X' : 'O',
+            currentPlayer: gameData.currentTurn === String(gameData.creatorId) ? 'X' : 'O',
             scale: 1,
             position: { x: 0, y: 0 },
             time: 0,
@@ -984,7 +984,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const MAX_MOVE_TIME = 30000;
 
     if (timeSinceLastMove > MAX_MOVE_TIME) {
-      const winner = gameData.currentTurn === gameData.creatorId ? gameData.opponentId : gameData.creatorId;
+      const winner = gameData.currentTurn === String(gameData.creatorId) ? gameData.opponentId : gameData.creatorId;
       
       // Очищаем данные игры из Redis
       await this.redis.del(`game:${data.gameId}`);
@@ -1008,13 +1008,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Обновляем состояние игры
     const newBoard = [...gameData.board];
-    newBoard[Number(data.position)] = data.player === gameData.creatorId ? '❌' : '⭕';
+    newBoard[Number(data.position)] = data.player === String(gameData.creatorId) ? '❌' : '⭕';
 
     const updatedGameData = {
       ...gameData,
       board: newBoard,
       lastMoveTime: currentTime,
-      currentTurn: data.player === gameData.creatorId ? gameData.opponentId : gameData.creatorId
+      currentTurn: data.player === String(gameData.creatorId) ? gameData.opponentId : gameData.creatorId
     };
 
     // Сохраняем обновленное состояние в Redis
@@ -1106,7 +1106,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { status: 'error', message: 'Game session not found' };
     }
 
-    const winner = data.player === session.creatorId ? session.opponentId : session.creatorId;
+    const winner = data.player === String(session.creatorId) ? session.opponentId : session.creatorId;
 
     await this.gameService.endGameSession(data.gameId, winner);
 
@@ -1586,7 +1586,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!lobbyData) return { error: 'No lobby data' };
 
     let opponentId: string | undefined;
-    if (lobbyData.creatorId === data.telegramId) {
+    if (Number(lobbyData.creatorId) === Number(data.telegramId)) {
       opponentId = lobbyData.opponentId;
     } else {
       opponentId = lobbyData.creatorId;
