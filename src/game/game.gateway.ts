@@ -60,6 +60,12 @@ interface GameData {
   lastMoveTime: number;
 }
 
+interface PlayerState {
+  roomId: string;  // ID комнаты (лобби или игры)
+  role: 'creator' | 'opponent';
+  marker: '⭕' | '❌';
+}
+
 @Injectable()
 @WebSocketGateway({
   path: '/socket.io/',
@@ -77,6 +83,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private connectedClients = new Map<string, Socket>();
+  private playerStates = new Map<string, PlayerState>(); // telegramId -> PlayerState
   private clientGames = new Map<string, string>(); // telegramId -> gameId
   private clientLobbies = new Map<string, string>(); // telegramId -> lobbyId
   private reconnectTimeouts = new Map<string, NodeJS.Timeout>(); // telegramId -> timeout
@@ -487,25 +494,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       
       // Сохраняем связь клиент-лобби
-      this.clientLobbies.set(data.telegramId, lobby.id);
-      this.clientGames.set(data.telegramId, lobby.id);
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      this.playerStates.set(data.telegramId, {
+        roomId: roomId,
+        role: 'creator',
+        marker: '❌'
+      });
       
-      console.log('🔗 Client associations saved:', { 
+      console.log('🔗 Player state saved:', { 
         telegramId: data.telegramId, 
-        lobbyId: lobby.id,
-        mappings: {
-          inClientGames: this.clientGames.has(data.telegramId),
-          inClientLobbies: this.clientLobbies.has(data.telegramId)
-        },
+        roomId: roomId,
+        state: this.playerStates.get(data.telegramId),
         timestamp: new Date().toISOString()
       });
       
-      // Добавляем клиента в комнату лобби
-      const roomId = lobby.id.replace(/^lobby/, 'room');
+      // Добавляем клиента в комнату
       client.join(roomId);
-      console.log('👥 Client joined game room:', { 
+      console.log('👥 Client joined room:', { 
         socketId: client.id, 
-        lobbyId: lobby.id,
         roomId: roomId,
         updatedRooms: Array.from(client.rooms)
       });
@@ -784,23 +790,44 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Формируем roomId на основе lobbyId
         const roomId = data.lobbyId.replace(/^lobby/, 'room');
 
-        // Унифицировано: creatorId всегда берём из лобби
-        const lobbyDataForGame = await this.getFromRedis(`lobby:${data.lobbyId}`);
-        const creatorIdForGame = lobbyDataForGame?.creatorId;
+        // Создаем игровую сессию
         const gameSession = await this.gameService.createGameSession(
-          roomId, // id игровой сессии = roomId
-          creatorIdForGame, // creatorId всегда из лобби
-          data.telegramId, // opponentId
-          false // pay по умолчанию
+          roomId,
+          lobby.creatorId,
+          data.telegramId,
+          false
         );
 
-        // Отправляем событие начала игры
+        // Обновляем состояние игрока
+        this.playerStates.set(data.telegramId, {
+          roomId: roomId,
+          role: 'opponent',
+          marker: '⭕'
+        });
+
+        // Присоединяем игроков к игровой комнате
+        client.join(roomId);
+        
+        const creatorSocket = this.connectedClients.get(lobby.creatorId);
+        if (creatorSocket) {
+          creatorSocket.join(roomId);
+          // Обновляем состояние создателя
+          this.playerStates.set(lobby.creatorId, {
+            roomId: roomId,
+            role: 'creator',
+            marker: '❌'
+          });
+
+          // Отправляем состояние игры создателю
+          this.sendGameStateToSocket(creatorSocket, gameSession, data.lobbyId);
+        }
+
+        // Отправляем события начала игры
         this.server.to(roomId).emit('gameStart', {
           gameId: gameSession.id,
           startTime: gameSession.startedAt
         });
 
-        // Отправляем начальное состояние игры
         this.server.to(roomId).emit('gameState', {
           board: gameSession.board,
           currentPlayer: gameSession.currentTurn,
@@ -815,90 +842,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           gameSession: {
             id: gameSession.id,
             creatorId: gameSession.creatorId,
-            opponentId: gameSession.opponentId
+            opponentId: gameSession.opponentId,
+            lobbyId: data.lobbyId
           }
         });
 
-        // Присоединяем игроков к игровой комнате
-        client.join(roomId);
-        this.clientGames.set(data.telegramId, roomId);
-        this.clientLobbies.delete(data.telegramId);
-
-        const creatorSocket = this.connectedClients.get(lobby.creatorId);
-        if (creatorSocket) {
-          this.clientLobbies.delete(lobby.creatorId);
-          this.clientGames.set(lobby.creatorId, roomId);
-          await this.updateTTL(`player:${lobby.creatorId}`);
-          await this.updateTTL(`player:${data.telegramId}`);
-          await this.updateTTL(`game:${roomId}`);
-          await this.updateTTL(`lobby:${data.lobbyId}`);
-          creatorSocket.join(roomId);
-          this.sendGameStateToSocket(creatorSocket, gameSession, data.lobbyId);
-          creatorSocket.emit('gameState', {
-            board: gameSession.board,
-            currentPlayer: gameSession.currentTurn,
-            scale: 1,
-            position: { x: 0, y: 0 },
-            time: 0,
-            playerTime1: gameSession.playerTime1,
-            playerTime2: gameSession.playerTime2,
-            startTime: gameSession.startedAt,
-            lastMoveTime: gameSession.lastMoveTime,
-            maxMoveTime: MAX_MOVE_TIME,
-            gameSession: {
-              id: gameSession.id,
-              creatorId: gameSession.creatorId,
-              opponentId: gameSession.opponentId,
-              lobbyId: data.lobbyId
-            }
-          });
-        }
-
-        // Формируем данные игровой сессии
-        const gameSessionData = {
-          id: roomId,
+        console.log('👥 Players joined game room:', {
+          roomId: roomId,
           creatorId: lobby.creatorId,
           opponentId: data.telegramId,
-          lobbyId: data.lobbyId,
-          timestamp: Date.now()
-        };
-
-        // Отправляем событие начала игры всем участникам
-        this.server.to(roomId).emit('gameStart', { 
-          session: gameSessionData,
-          gameData: gameSession,
-          playerInfo: {
-            ...(data.avatar ? { avatar: data.avatar } : {}),
-            ...(data.name ? { name: data.name } : {})
-          }
-        });
-
-        console.log('🚀 [Game Start] Game session initialized:', {
-          lobbyId: data.lobbyId,
-          roomId,
-          session: gameSessionData,
-          playerInfo: {
-            ...(data.avatar ? { avatar: data.avatar } : {}),
-            ...(data.name ? { name: data.name } : {})
-          },
-          mappings: {
-            creatorInGames: this.clientGames.has(lobby.creatorId),
-            opponentInGames: this.clientGames.has(data.telegramId),
-            creatorInLobbies: this.clientLobbies.has(lobby.creatorId),
-            opponentInLobbies: this.clientLobbies.has(data.telegramId)
+          states: {
+            creator: this.playerStates.get(lobby.creatorId),
+            opponent: this.playerStates.get(data.telegramId)
           },
           timestamp: new Date().toISOString()
         });
 
-        client.leave(data.lobbyId);
-        if (creatorSocket) {
-          creatorSocket.leave(data.lobbyId);
-        }
-
         return { 
           status: 'joined',
           gameData: gameSession,
-          session: gameSessionData
+          session: gameSession
         };
       }
     } catch (error) {
