@@ -258,20 +258,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             timestamp: new Date().toISOString()
           });
 
-          // Проверяем и обновляем socketId
-          if (lobbyData.socketId && lobbyData.socketId !== client.id) {
-            console.log('🔄 [Socket] Updating socketId for lobby:', {
-              lobbyId: playerData.lobbyId,
-              oldSocketId: lobbyData.socketId,
-              newSocketId: client.id,
-              timestamp: new Date().toISOString()
-            });
-
-            await this.saveToRedis(`lobby:${playerData.lobbyId}`, {
-              ...lobbyData,
-              socketId: client.id
-            });
-          }
+          // Используем существующий socketId из лобби
+          const originalSocketId = lobbyData.socketId;
+          console.log('🔌 [Socket] Using original socketId from lobby:', {
+            lobbyId: playerData.lobbyId,
+            originalSocketId,
+            currentSocketId: client.id,
+            timestamp: new Date().toISOString()
+          });
 
           // Проверяем наличие активной игры
           const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
@@ -450,13 +444,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log('✅ Lobby created:', { 
         lobbyId: lobby.id, 
         creatorId: data.telegramId,
-        status: lobby.status,
-        isNewUser: true
+        status: lobby.status
       });
       
+      // Проверяем существование пользователя в таблице User
+      const user = await this.gameService.findUserByTelegramId(data.telegramId);
+      const isNewUser = !user;
+      console.log('👤 [CreateLobby] User check:', {
+        telegramId: data.telegramId,
+        isNewUser,
+        timestamp: new Date().toISOString()
+      });
+
       // Сохраняем данные в Redis
       const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
-      const isNewUser = !existingPlayerData;
       console.log('🔍 [CreateLobby] Existing player data:', {
         telegramId: data.telegramId,
         existingData: existingPlayerData,
@@ -468,25 +469,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
-        newUser: isNewUser
-      });
-      console.log('[DEBUG][PLAYER SAVE]', {
-        telegramId: data.telegramId,
-        lobbyId: lobby.id,
-        role: 'creator',
-        marker: '❌',
-        source: 'handleCreateLobby',
-        timestamp: new Date().toISOString()
+        newUser: isNewUser  // Используем результат проверки в таблице User
       });
 
+      // socketId сохраняется ТОЛЬКО при создании лобби и больше не обновляется
       await this.saveToRedis(`lobby:${lobby.id}`, {
         creatorId: data.telegramId,
         status: 'active',
         createdAt: Date.now(),
-        socketId: client.id
+        socketId: client.id // Сохраняем socketId только при создании лобби
       });
       
-      console.log('🔌 [Socket] Saved socketId for lobby:', {
+      console.log('🔌 [Socket] Initial socketId saved for lobby:', {
         lobbyId: lobby.id,
         socketId: client.id,
         timestamp: new Date().toISOString()
@@ -507,16 +501,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       
       // Добавляем клиента в комнату лобби
-      client.join(lobby.id);
-      console.log('👥 Client joined lobby room:', { 
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      client.join(roomId);
+      console.log('👥 Client joined game room:', { 
         socketId: client.id, 
         lobbyId: lobby.id,
+        roomId: roomId,
         updatedRooms: Array.from(client.rooms)
       });
       
       // Отправляем событие о готовности лобби
-      this.server.to(lobby.id).emit('lobbyReady', { 
+      this.server.to(roomId).emit('lobbyReady', { 
         lobbyId: lobby.id,
+        roomId: roomId,
         timestamp: Date.now(),
         creatorMarker: '❌'
       });
@@ -603,19 +600,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Обновляем TTL для лобби
       await this.updateTTL(`lobby:${data.lobbyId}`);
 
-      // Обновляем socketId в данных лобби
+      // Получаем данные лобби
       const currentLobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
       if (currentLobbyData) {
-        console.log('🔄 [Socket] Updating socketId on join:', {
+        console.log('🔌 [Socket] Using original socketId from lobby:', {
           lobbyId: data.lobbyId,
-          oldSocketId: currentLobbyData.socketId,
-          newSocketId: client.id,
+          originalSocketId: currentLobbyData.socketId,
+          currentSocketId: client.id,
           timestamp: new Date().toISOString()
-        });
-
-        await this.saveToRedis(`lobby:${data.lobbyId}`, {
-          ...currentLobbyData,
-          socketId: client.id
         });
       }
 
@@ -678,11 +670,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           // Подключаем создателя к игровой комнате
-          client.join(data.lobbyId);
-          this.clientGames.set(data.telegramId, data.lobbyId);
+          const roomId = data.lobbyId.replace(/^lobby/, 'room');
+          client.join(roomId);
+          this.clientGames.set(data.telegramId, roomId);
+          this.clientLobbies.delete(data.telegramId);
 
           // Обновляем TTL для игры
-          await this.updateTTL(`game:${roomIdJoin}`);
+          await this.updateTTL(`game:${roomId}`);
 
           // Отправляем текущее состояние игры
           this.sendGameStateToSocket(client, gameDataJoin, data.lobbyId);
@@ -702,7 +696,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
 
         // Если игровой сессии нет, подключаем к лобби
-        client.join(data.lobbyId);
+        const roomId = data.lobbyId.replace(/^lobby/, 'room');
+        client.join(roomId);
         this.clientLobbies.set(data.telegramId, data.lobbyId);
 
         return { status: 'creator_lobby_joined' };

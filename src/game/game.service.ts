@@ -12,14 +12,10 @@ export class GameService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @InjectRedis() private readonly redis: Redis,
+    @InjectRedis() private readonly redis: Redis
   ) {
     // Запускаем периодическую очистку каждые 5 минут
-    setInterval(() => {
-      this.cleanupInconsistentData().catch(error => {
-        console.error('Error during cleanup:', error);
-      });
-    }, 5 * 60 * 1000);
+    setInterval(() => this.cleanupStaleData(), 5 * 60 * 1000);
   }
 
   private async checkLobbyLimit(telegramId: string): Promise<boolean> {
@@ -437,7 +433,7 @@ export class GameService {
   }
 
   // Добавляем метод для периодической проверки консистентности данных
-  private async cleanupInconsistentData(): Promise<void> {
+  private async cleanupStaleData(): Promise<void> {
     const lobbies = Array.from(this.activeLobbies.values());
     
     for (const lobby of lobbies) {
@@ -604,15 +600,30 @@ export class GameService {
     }
   }
 
-  async isNewUser(telegramId: string): Promise<boolean> {
+  /**
+   * Проверяет, является ли пользователь новым
+   * @param telegramId Telegram ID пользователя
+   * @returns true если пользователь новый (не найден в таблице Game), false если найден
+   * @throws Error если произошла ошибка при проверке
+   */
+  async findUserByTelegramId(telegramId: string): Promise<boolean> {
     try {
-      const user = await this.prisma.user.findUnique({
-        where: { telegramId }
+      // Ищем пользователя в таблице Game
+      const existingGame = await this.prisma.game.findFirst({
+        where: {
+          OR: [
+            { createdBy: telegramId },
+            { rival: telegramId }
+          ]
+        }
       });
-      return !user; // true если пользователь не найден
+
+      // Если игра не найдена - пользователь новый
+      return !existingGame;
     } catch (error) {
-      console.error('Error checking user existence:', error);
-      return false; // в случае ошибки считаем пользователя существующим
+      console.error('Error checking user in Game table:', error);
+      // Пробрасываем ошибку дальше для обработки на уровне выше
+      throw new Error(`Failed to check if user is new: ${error.message}`);
     }
   }
 
