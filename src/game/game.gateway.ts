@@ -1106,7 +1106,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { status: 'error', message: 'Game session not found' };
     }
 
-    const winner = data.player === String(session.creatorId) ? session.opponentId : session.creatorId;
+    const winner = String(session.creatorId) === String(data.player) ? session.opponentId : session.creatorId;
 
     await this.gameService.endGameSession(data.gameId, winner);
 
