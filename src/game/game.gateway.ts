@@ -274,7 +274,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
 
           // Проверяем наличие активной игры
-          const gameData = await this.getFromRedis(`game:${playerData.lobbyId}`);
+          const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
+          const gameData = await this.getFromRedis(`game:${roomId}`);
           
           console.log('🎲 [State Restore] Game data check:', {
             lobbyId: playerData.lobbyId,
@@ -304,7 +305,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             // Обновляем TTL для всех ключей
             await this.updateTTL(`player:${telegramId}`);
             await this.updateTTL(`lobby:${playerData.lobbyId}`);
-            await this.updateTTL(`game:${playerData.lobbyId}`);
+            await this.updateTTL(`game:${roomId}`);
 
             // Отправляем текущее состояние игры
             this.sendGameStateToSocket(client, gameData, playerData.lobbyId);
@@ -654,23 +655,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         // Проверяем существующую игровую сессию в Redis
-        const gameData = await this.getFromRedis(`game:${data.lobbyId}`);
+        const roomIdJoin = data.lobbyId.replace(/^lobby/, 'room');
+        const gameDataJoin = await this.getFromRedis(`game:${roomIdJoin}`);
         
         console.log('🎲 [Creator Join] Game session check:', {
           lobbyId: data.lobbyId,
-          hasGameData: Boolean(gameData),
-          gameState: gameData ? {
-            board: gameData.board,
-            currentTurn: gameData.currentTurn,
-            lastMoveTime: gameData.lastMoveTime
+          hasGameData: Boolean(gameDataJoin),
+          gameState: gameDataJoin ? {
+            board: gameDataJoin.board,
+            currentTurn: gameDataJoin.currentTurn,
+            lastMoveTime: gameDataJoin.lastMoveTime
           } : null,
           timestamp: new Date().toISOString()
         });
 
-        if (gameData || lobby.status === 'closed') {
+        if (gameDataJoin || lobby.status === 'closed') {
           console.log('🎮 [Creator Join] Found active game session:', {
             lobbyId: data.lobbyId,
-            gameData,
+            gameData: gameDataJoin,
             lobbyStatus: lobby.status,
             timestamp: new Date().toISOString()
           });
@@ -680,18 +682,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           this.clientGames.set(data.telegramId, data.lobbyId);
 
           // Обновляем TTL для игры
-          await this.updateTTL(`game:${data.lobbyId}`);
+          await this.updateTTL(`game:${roomIdJoin}`);
 
           // Отправляем текущее состояние игры
-          this.sendGameStateToSocket(client, gameData, data.lobbyId);
+          this.sendGameStateToSocket(client, gameDataJoin, data.lobbyId);
 
           console.log('✅ [Creator Join] Successfully joined game:', {
             lobbyId: data.lobbyId,
             creatorId: data.telegramId,
             gameState: {
-              board: gameData.board,
-              currentTurn: gameData.currentTurn,
-              lastMoveTime: gameData.lastMoveTime
+              board: gameDataJoin.board,
+              currentTurn: gameDataJoin.currentTurn,
+              lastMoveTime: gameDataJoin.lastMoveTime
             },
             timestamp: new Date().toISOString()
           });
@@ -939,7 +941,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: MakeMoveDto
   ) {
     // Получаем текущее состояние игры из Redis
-    const gameData = await this.getFromRedis(`game:${data.gameId}`);
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    const gameData = await this.getFromRedis(`game:${roomId}`);
     if (!gameData) {
       return { status: 'error', message: 'Game session not found' };
     }
@@ -1472,17 +1475,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`lobby:${playerData.lobbyId}`);
 
           // Проверяем наличие активной игры
-          const gameData = await this.getFromRedis(`game:${playerData.lobbyId}`);
-          if (gameData) {
+          const roomIdUi = playerData.lobbyId.replace(/^lobby/, 'room');
+          const gameDataUi = await this.getFromRedis(`game:${roomIdUi}`);
+          if (gameDataUi) {
             console.log('🎲 [WebApp] Active game check:', {
               lobbyId: playerData.lobbyId,
               hasGameData: true,
-              currentTurn: gameData.currentTurn,
-              isPlayerTurn: gameData.currentTurn === data.telegramId,
+              currentTurn: gameDataUi.currentTurn,
+              isPlayerTurn: gameDataUi.currentTurn === data.telegramId,
               timestamp: new Date().toISOString()
             });
 
-            await this.updateTTL(`game:${playerData.lobbyId}`);
+            await this.updateTTL(`game:${roomIdUi}`);
           }
 
           // Обновляем статус в Redis
