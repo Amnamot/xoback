@@ -1,13 +1,15 @@
 import { IsString, IsNumber, IsObject, ValidateNested, IsOptional } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class ConnectDto {
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 }
 
 export class CreateLobbyDto {
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 
     @IsString()
@@ -24,6 +26,7 @@ export class JoinLobbyDto {
     lobbyId: string;
 
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 
     @IsString()
@@ -52,6 +55,7 @@ export class MakeMoveDto {
     position: PositionDto;
 
     @IsString()
+    @Transform(({ value }) => String(value))
     player: string;
 
     @IsNumber()
@@ -105,6 +109,7 @@ export class JoinGameDto {
     gameId: string;
 
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 }
 
@@ -113,16 +118,19 @@ export class TimeExpiredDto {
     gameId: string;
 
     @IsString()
+    @Transform(({ value }) => String(value))
     player: string;
 }
 
 export class CreateInviteDto {
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 }
 
 export class CancelLobbyDto {
     @IsString()
+    @Transform(({ value }) => String(value))
     telegramId: string;
 }
 
