@@ -801,10 +801,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         // Формируем roomId на основе lobbyId
         const roomId = data.lobbyId.replace(/^lobby/, 'room');
 
-        // Создаем игровую сессию
+        // Унифицировано: creatorId всегда берём из лобби
+        const lobbyDataForGame = await this.getFromRedis(`lobby:${data.lobbyId}`);
+        const creatorIdForGame = lobbyDataForGame?.creatorId;
         const gameSession = await this.gameService.createGameSession(
-          roomId, // теперь id игровой сессии = roomId
-          data.telegramId
+          roomId, // id игровой сессии = roomId
+          creatorIdForGame, // creatorId всегда из лобби
+          data.telegramId, // opponentId
+          false // pay по умолчанию
         );
 
         // Отправляем событие начала игры

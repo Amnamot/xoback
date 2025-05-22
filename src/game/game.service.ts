@@ -358,9 +358,8 @@ export class GameService {
   }
 
   // Методы для работы с игровыми сессиями
-  async createGameSession(lobbyId: string, opponentId: string, pay: boolean = false): Promise<GameSession> {
+  async createGameSession(lobbyId: string, creatorId: string, opponentId: string, pay: boolean = false): Promise<GameSession> {
     const now = Date.now();
-    const creatorId = (await this.getLobby(lobbyId))?.creatorId || '';
     const gameSession: GameSession = {
       id: lobbyId,
       creatorId,
