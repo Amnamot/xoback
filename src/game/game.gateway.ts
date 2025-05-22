@@ -852,6 +852,33 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`lobby:${data.lobbyId}`);
           creatorSocket.join(roomId);
           // Отправляем создателю состояние игры
+          console.log('[DEBUG][SOCKET][SEND_GAMESTATE][CREATOR]', {
+            to: lobby.creatorId,
+            gameSession: {
+              id: gameSession.id,
+              creatorId: gameSession.creatorId,
+              opponentId: gameSession.opponentId,
+              lobbyId: data.lobbyId
+            },
+            fullPayload: {
+              board: gameSession.board,
+              currentPlayer: gameSession.currentTurn,
+              scale: 1,
+              position: { x: 0, y: 0 },
+              time: 0,
+              playerTime1: gameSession.playerTime1,
+              playerTime2: gameSession.playerTime2,
+              startTime: gameSession.startedAt,
+              lastMoveTime: gameSession.lastMoveTime,
+              maxMoveTime: MAX_MOVE_TIME,
+              gameSession: {
+                id: gameSession.id,
+                creatorId: gameSession.creatorId,
+                opponentId: gameSession.opponentId,
+                lobbyId: data.lobbyId
+              }
+            }
+          });
           creatorSocket.emit('gameState', {
             board: gameSession.board,
             currentPlayer: gameSession.currentTurn,
@@ -873,6 +900,33 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
 
         // Отправляем оппоненту состояние игры
+        console.log('[DEBUG][SOCKET][SEND_GAMESTATE][OPPONENT]', {
+          to: data.telegramId,
+          gameSession: {
+            id: gameSession.id,
+            creatorId: gameSession.creatorId,
+            opponentId: gameSession.opponentId,
+            lobbyId: data.lobbyId
+          },
+          fullPayload: {
+            board: gameSession.board,
+            currentPlayer: gameSession.currentTurn,
+            scale: 1,
+            position: { x: 0, y: 0 },
+            time: 0,
+            playerTime1: gameSession.playerTime1,
+            playerTime2: gameSession.playerTime2,
+            startTime: gameSession.startedAt,
+            lastMoveTime: gameSession.lastMoveTime,
+            maxMoveTime: MAX_MOVE_TIME,
+            gameSession: {
+              id: gameSession.id,
+              creatorId: gameSession.creatorId,
+              opponentId: gameSession.opponentId,
+              lobbyId: data.lobbyId
+            }
+          }
+        });
         client.emit('gameState', {
           board: gameSession.board,
           currentPlayer: gameSession.currentTurn,

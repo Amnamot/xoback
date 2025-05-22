@@ -70,6 +70,7 @@ export class UserService {
     return this.prisma.user.findUnique({
       where: { telegramId: dto.telegramId },
       select: {
+        telegramId: true,
         firstName: true,
         numGames: true,
         numWins: true,
