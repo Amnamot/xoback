@@ -31,6 +31,8 @@ import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 import { InitDataService } from '../utils/init-data.service';
 
+const MAX_MOVE_TIME = 30000;
+
 // Интерфейсы для Redis
 interface PlayerData {
   lobbyId?: string;
@@ -305,16 +307,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`game:${playerData.lobbyId}`);
 
             // Отправляем текущее состояние игры
-            client.emit('gameState', {
-              board: gameData?.board || Array(9).fill(''),
-              currentPlayer: gameData?.currentTurn === telegramId ? 
-                (playerData.role === 'creator' ? 'X' : 'O') : 
-                (playerData.role === 'creator' ? 'O' : 'X'),
-              scale: 1,
-              position: { x: 0, y: 0 },
-              time: 0,
-              gameData: gameData || { board: Array(9).fill('') }
-            });
+            this.sendGameStateToSocket(client, gameData, playerData.lobbyId);
 
             console.log('✅ [State Restore] Game state sent:', {
               telegramId,
@@ -690,14 +683,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`game:${data.lobbyId}`);
 
           // Отправляем текущее состояние игры
-          client.emit('gameState', {
-            board: gameData.board,
-            currentPlayer: gameData.currentTurn === String(gameData.creatorId) ? 'X' : 'O',
-            scale: 1,
-            position: { x: 0, y: 0 },
-            time: 0,
-            gameData
-          });
+          this.sendGameStateToSocket(client, gameData, data.lobbyId);
 
           console.log('✅ [Creator Join] Successfully joined game:', {
             lobbyId: data.lobbyId,
@@ -818,7 +804,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         // Отправляем начальное состояние игры
-        const MAX_MOVE_TIME = 30000;
         this.server.to(roomId).emit('gameState', {
           board: gameSession.board,
           currentPlayer: gameSession.currentTurn,
@@ -851,34 +836,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           await this.updateTTL(`game:${roomId}`);
           await this.updateTTL(`lobby:${data.lobbyId}`);
           creatorSocket.join(roomId);
-          // Отправляем создателю состояние игры
-          console.log('[DEBUG][SOCKET][SEND_GAMESTATE][CREATOR]', {
-            to: lobby.creatorId,
-            gameSession: {
-              id: gameSession.id,
-              creatorId: gameSession.creatorId,
-              opponentId: gameSession.opponentId,
-              lobbyId: data.lobbyId
-            },
-            fullPayload: {
-              board: gameSession.board,
-              currentPlayer: gameSession.currentTurn,
-              scale: 1,
-              position: { x: 0, y: 0 },
-              time: 0,
-              playerTime1: gameSession.playerTime1,
-              playerTime2: gameSession.playerTime2,
-              startTime: gameSession.startedAt,
-              lastMoveTime: gameSession.lastMoveTime,
-              maxMoveTime: MAX_MOVE_TIME,
-              gameSession: {
-                id: gameSession.id,
-                creatorId: gameSession.creatorId,
-                opponentId: gameSession.opponentId,
-                lobbyId: data.lobbyId
-              }
-            }
-          });
+          this.sendGameStateToSocket(creatorSocket, gameSession, data.lobbyId);
           creatorSocket.emit('gameState', {
             board: gameSession.board,
             currentPlayer: gameSession.currentTurn,
@@ -894,57 +852,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
               id: gameSession.id,
               creatorId: gameSession.creatorId,
               opponentId: gameSession.opponentId,
-              lobbyId: data.lobbyId // сохраняем связь
+              lobbyId: data.lobbyId
             }
           });
         }
-
-        // Отправляем оппоненту состояние игры
-        console.log('[DEBUG][SOCKET][SEND_GAMESTATE][OPPONENT]', {
-          to: data.telegramId,
-          gameSession: {
-            id: gameSession.id,
-            creatorId: gameSession.creatorId,
-            opponentId: gameSession.opponentId,
-            lobbyId: data.lobbyId
-          },
-          fullPayload: {
-            board: gameSession.board,
-            currentPlayer: gameSession.currentTurn,
-            scale: 1,
-            position: { x: 0, y: 0 },
-            time: 0,
-            playerTime1: gameSession.playerTime1,
-            playerTime2: gameSession.playerTime2,
-            startTime: gameSession.startedAt,
-            lastMoveTime: gameSession.lastMoveTime,
-            maxMoveTime: MAX_MOVE_TIME,
-            gameSession: {
-              id: gameSession.id,
-              creatorId: gameSession.creatorId,
-              opponentId: gameSession.opponentId,
-              lobbyId: data.lobbyId
-            }
-          }
-        });
-        client.emit('gameState', {
-          board: gameSession.board,
-          currentPlayer: gameSession.currentTurn,
-          scale: 1,
-          position: { x: 0, y: 0 },
-          time: 0,
-          playerTime1: gameSession.playerTime1,
-          playerTime2: gameSession.playerTime2,
-          startTime: gameSession.startedAt,
-          lastMoveTime: gameSession.lastMoveTime,
-          maxMoveTime: MAX_MOVE_TIME,
-          gameSession: {
-            id: gameSession.id,
-            creatorId: gameSession.creatorId,
-            opponentId: gameSession.opponentId,
-            lobbyId: data.lobbyId // сохраняем связь
-          }
-        });
 
         // Формируем данные игровой сессии
         const gameSessionData = {
@@ -1035,7 +946,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const currentTime = Date.now();
     const timeSinceLastMove = currentTime - gameData.lastMoveTime;
-    const MAX_MOVE_TIME = 30000;
 
     if (timeSinceLastMove > MAX_MOVE_TIME) {
       const winner = gameData.currentTurn === String(gameData.creatorId) ? gameData.opponentId : gameData.creatorId;
@@ -1682,5 +1592,35 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       console.error('Cleanup interval error:', error);
     }
+  }
+
+  /**
+   * Отправляет актуальное состояние игры конкретному сокету
+   */
+  private sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
+    socket.emit('gameState', {
+      board: gameSession.board,
+      currentPlayer: gameSession.currentTurn,
+      scale: 1,
+      position: { x: 0, y: 0 },
+      time: 0,
+      playerTime1: gameSession.playerTime1,
+      playerTime2: gameSession.playerTime2,
+      startTime: gameSession.startedAt,
+      lastMoveTime: gameSession.lastMoveTime,
+      maxMoveTime: MAX_MOVE_TIME,
+      gameSession: {
+        id: gameSession.id,
+        creatorId: gameSession.creatorId,
+        opponentId: gameSession.opponentId,
+        lobbyId: lobbyId
+      }
+    });
+    console.log('[DEBUG][SOCKET][AUTO_SEND_GAMESTATE_ON_JOIN]', {
+      to: socket.id,
+      gameSessionId: gameSession.id,
+      lobbyId,
+      timestamp: new Date().toISOString()
+    });
   }
 }
