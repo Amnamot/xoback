@@ -807,6 +807,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         // Присоединяем игроков к игровой комнате
         client.join(roomId);
+        console.log('👥 [JoinLobby] Invited player joined room:', {
+          roomId: roomId,
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
         
         const creatorSocket = this.connectedClients.get(lobby.creatorId);
         if (creatorSocket) {
