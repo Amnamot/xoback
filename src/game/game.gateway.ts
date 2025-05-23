@@ -22,7 +22,8 @@ import {
   JoinGameDto,
   TimeExpiredDto,
   CreateInviteDto,
-  CancelLobbyDto
+  CancelLobbyDto,
+  RestoreStateDto
 } from './dto/socket.dto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -1541,6 +1542,117 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
     console.log('🟢 [getOpponentInfo] Returning opponent data:', { telegramId: data.telegramId, opponentId, result, timestamp: new Date().toISOString() });
     return result;
+  }
+
+  @SubscribeMessage('restoreState')
+  @UsePipes(new ValidationPipe())
+  async handleRestoreState(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: RestoreStateDto
+  ) {
+    try {
+      console.log('🔄 [RestoreState] Attempting to restore state:', {
+        telegramId: data.telegramId,
+        lastKnownState: data.lastKnownState,
+        lastActionTimestamp: data.lastActionTimestamp,
+        timestamp: new Date().toISOString()
+      });
+
+      // Получаем все данные игрока
+      const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+      if (!playerData) {
+        console.log('❌ [RestoreState] No player data found:', {
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return { status: 'error', message: 'No player data found' };
+      }
+
+      // Проверяем наличие активной игры
+      if (playerData.gameId) {
+        const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
+        if (gameData) {
+          console.log('🎮 [RestoreState] Restoring active game:', {
+            telegramId: data.telegramId,
+            gameId: playerData.gameId,
+            timestamp: new Date().toISOString()
+          });
+
+          // Подключаем к комнате игры
+          client.join(playerData.gameId);
+          this.clientGames.set(data.telegramId, playerData.gameId);
+
+          // Отправляем текущее состояние игры
+          this.sendGameStateToSocket(client, gameData, playerData.gameId);
+
+          return {
+            status: 'success',
+            state: 'game',
+            gameData: {
+              board: gameData.board,
+              currentTurn: gameData.currentTurn,
+              playerTime1: gameData.playerTime1,
+              playerTime2: gameData.playerTime2,
+              startTime: gameData.startTime,
+              lastMoveTime: gameData.lastMoveTime
+            }
+          };
+        }
+      }
+
+      // Проверяем наличие активного лобби
+      if (playerData.lobbyId) {
+        const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
+        if (lobbyData) {
+          console.log('🎯 [RestoreState] Restoring active lobby:', {
+            telegramId: data.telegramId,
+            lobbyId: playerData.lobbyId,
+            timestamp: new Date().toISOString()
+          });
+
+          // Подключаем к комнате лобби
+          client.join(playerData.lobbyId);
+          this.clientLobbies.set(data.telegramId, playerData.lobbyId);
+
+          // Обновляем TTL для всех ключей
+          await this.updateTTL(`player:${data.telegramId}`);
+          await this.updateTTL(`lobby:${playerData.lobbyId}`);
+
+          return {
+            status: 'success',
+            state: 'lobby',
+            lobbyData: {
+              lobbyId: playerData.lobbyId,
+              role: playerData.role,
+              marker: playerData.marker,
+              inviteSent: playerData.inviteSent
+            }
+          };
+        }
+      }
+
+      // Если нет активной игры или лобби, возвращаем базовое состояние
+      return {
+        status: 'success',
+        state: 'idle',
+        playerData: {
+          name: playerData.name,
+          avatar: playerData.avatar
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ [RestoreState] Error restoring state:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        telegramId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+
+      return {
+        status: 'error',
+        message: error instanceof Error ? error.message : 'Failed to restore state'
+      };
+    }
   }
 
   onModuleDestroy() {

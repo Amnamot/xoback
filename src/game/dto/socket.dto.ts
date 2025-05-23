@@ -140,4 +140,17 @@ export class GameStartDto {
 
     @IsNumber()
     startTime: number;
+}
+
+export class RestoreStateDto {
+    @IsString()
+    telegramId: string;
+
+    @IsOptional()
+    @IsString()
+    lastKnownState?: string;
+
+    @IsOptional()
+    @IsNumber()
+    lastActionTimestamp?: number;
 } 
