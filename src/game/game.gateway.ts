@@ -1655,6 +1655,73 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('getInitialState')
+  async handleGetInitialState(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { telegramId: string }
+  ) {
+    console.log('🔄 [InitialState] Getting initial state:', {
+      telegramId: data.telegramId,
+      timestamp: new Date().toISOString()
+    });
+
+    // Получаем данные игрока
+    const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+    if (!playerData) {
+      console.log('❌ [InitialState] No player data found:', {
+        telegramId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+      return { status: 'error', message: 'No player data found' };
+    }
+
+    // Если есть активная игра, отправляем её состояние
+    if (playerData.gameId) {
+      const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
+      if (gameData) {
+        console.log('🎮 [InitialState] Found active game:', {
+          telegramId: data.telegramId,
+          gameId: playerData.gameId,
+          timestamp: new Date().toISOString()
+        });
+
+        // Подключаем к комнате игры
+        client.join(playerData.gameId);
+        this.clientGames.set(data.telegramId, playerData.gameId);
+
+        // Отправляем текущее состояние игры
+        this.sendGameStateToSocket(client, gameData, playerData.gameId);
+
+        return {
+          status: 'success',
+          state: 'game',
+          gameData: {
+            board: gameData.board,
+            currentTurn: gameData.currentTurn,
+            playerTime1: gameData.playerTime1,
+            playerTime2: gameData.playerTime2,
+            startTime: gameData.startTime,
+            lastMoveTime: gameData.lastMoveTime
+          }
+        };
+      }
+    }
+
+    // Если нет активной игры, отправляем начальное состояние
+    return {
+      status: 'success',
+      state: 'waiting',
+      gameData: {
+        board: Array(10000).fill(null),
+        currentTurn: 'X',
+        playerTime1: 0,
+        playerTime2: 0,
+        startTime: Date.now(),
+        lastMoveTime: Date.now()
+      }
+    };
+  }
+
   onModuleDestroy() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
