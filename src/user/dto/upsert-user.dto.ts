@@ -13,7 +13,7 @@ export class UpsertUserDto {
     firstName: string;
 
     @IsString()
-    lastName: string;
+    lastName?: string;
 
     @IsString()
     @IsOptional()

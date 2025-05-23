@@ -56,37 +56,41 @@ export class UserController {
       userName
     });
 
-    // 2. Обновляем Redis
-    const redisKey = `player:${id}`;
-    let playerData: any = {};
+    // 2. Проверяем существование лобби
+    const lobbyKey = `lobby:${id}`;
+    let lobbyData = null;
     try {
-      const existing = await this.redis.get(redisKey);
-      if (existing) {
-        playerData = JSON.parse(existing);
+      const existingLobby = await this.redis.get(lobbyKey);
+      if (existingLobby) {
+        lobbyData = JSON.parse(existingLobby);
       }
     } catch (e) {
-      playerData = {};
+      console.error('Error checking lobby:', e);
     }
-    playerData.name = firstName;
-    playerData.avatar = avatar;
-    await this.redis.set(redisKey, JSON.stringify(playerData), 'EX', 180);
 
-    // Логируем содержимое Redis после записи
-    const redisValue = await this.redis.get(redisKey);
-    let parsedValue = null;
-    try {
-      parsedValue = JSON.parse(redisValue || '{}');
-    } catch (e) {
-      parsedValue = redisValue;
-    }
-    console.log('📝 [UserController] Player data in Redis после /user/init:', {
+    // 3. Формируем ответ
+    const response = {
+      ...dbUser,
+      lobby: lobbyData ? {
+        lobbyId: lobbyData.id,
+        status: lobbyData.status
+      } : null
+    };
+
+    // 4. Логируем ответ
+    console.log('📝 [UserController] /user/init response:', {
       telegramId: id,
-      name: firstName,
-      avatar,
-      redisValue: parsedValue,
+      userData: {
+        firstName,
+        lastName,
+        userName,
+        avatar
+      },
+      dbUser,
+      lobby: response.lobby,
       timestamp: new Date().toISOString()
     });
 
-    return dbUser;
+    return response;
   }
 }
