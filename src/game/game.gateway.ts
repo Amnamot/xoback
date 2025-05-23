@@ -568,7 +568,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log('🔍 [JoinLobby] Attempting to join lobby:', {
       lobbyId: data.lobbyId,
       telegramId: data.telegramId,
-      startParam: client.handshake.query.start_param,
       timestamp: new Date().toISOString()
     });
 
@@ -577,7 +576,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       lobbyId: data.lobbyId,
       roomId,
       telegramId: data.telegramId,
-      startParam: client.handshake.query.start_param,
       timestamp: new Date().toISOString()
     });
 
@@ -585,14 +583,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Получаем данные лобби
       const lobby = await this.gameService.getLobby(data.lobbyId);
       
-      console.log('📊 [JoinLobby] Lobby data:', {
-        lobbyId: data.lobbyId,
-        lobby,
-        telegramId: data.telegramId,
-        startParam: client.handshake.query.start_param,
-        timestamp: new Date().toISOString()
-      });
-
       if (!lobby) {
         console.warn('⚠️ [JoinLobby] Lobby not found:', {
           lobbyId: data.lobbyId,
