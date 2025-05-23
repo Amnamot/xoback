@@ -10,9 +10,9 @@ class CustomIoAdapter extends IoAdapter {
     const server = super.createIOServer(port, {
       ...options,
       cors: {
-        origin: ['https://igra.top', 'http://igra.top', 'http://localhost:3000', 'http://localhost:3001'],
+        origin: ['https://igra.top', 'http://igra.top', 'https://api.igra.top', 'http://api.igra.top', 'http://localhost:3000', 'http://localhost:3001'],
         credentials: true,
-        methods: ['GET', 'POST', 'OPTIONS'],
+        methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
         allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId', 'connect-src']
       },
       allowEIO3: true,
@@ -31,7 +31,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: ['https://igra.top', 'http://igra.top', 'http://localhost:3000', 'http://localhost:3001'],
+    origin: ['https://igra.top', 'http://igra.top', 'https://api.igra.top', 'http://api.igra.top', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'x-init-data', 'telegramId', 'connect-src'],
