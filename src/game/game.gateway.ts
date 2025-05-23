@@ -565,10 +565,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinLobbyDto
   ) {
-    console.log('🎮 [JoinLobby] Handling joinLobby request:', {
-      telegramId: data.telegramId,
+    console.log('🔍 [JoinLobby] Attempting to join lobby:', {
       lobbyId: data.lobbyId,
-      startParam: client.handshake.query.start_param,
+      telegramId: data.telegramId,
+      timestamp: new Date().toISOString()
+    });
+
+    const roomId = data.lobbyId.replace(/^lobby/, 'room');
+    console.log('🎯 [JoinLobby] Target room:', {
+      lobbyId: data.lobbyId,
+      roomId,
+      telegramId: data.telegramId,
       timestamp: new Date().toISOString()
     });
 
