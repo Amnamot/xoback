@@ -6,12 +6,14 @@ import {
   Body,
   UnauthorizedException,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UpsertUserDto } from './dto/upsert-user.dto';
 import { InitDataService } from '../utils/init-data.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
+import { AuthGuard } from '../auth/auth.guard';
 
 @Controller('user')
 export class UserController {
@@ -27,6 +29,7 @@ export class UserController {
   }
 
   @Post('init')
+  @UseGuards(AuthGuard)
   async init(@Body() body: { initData: string }) {
     const isValid = this.initDataService.validateInitData(body.initData);
 
