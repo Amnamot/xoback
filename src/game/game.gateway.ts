@@ -353,30 +353,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
 
-      // Добавляем логирование перед созданием игровой сессии
-      console.log('🎮 [CreateLobby] Starting game session creation:', {
-        lobbyId: lobby.id,
-        creatorId: data.telegramId,
-        timestamp: new Date().toISOString()
-      });
-
-      // Создаем игровую сессию сразу после создания лобби
+      // Создаем игровую сессию через GameService
       const gameSession = await this.gameService.createGameSession(lobby.id, {
         creatorId: data.telegramId,
         opponentId: '', // Пустой ID оппонента, так как он еще не подключился
         creatorMarker: '❌',
         opponentMarker: '⭕',
         startTime: Date.now()
-      });
-
-      // Добавляем логирование после создания игровой сессии
-      console.log('🎮 [CreateLobby] Game session creation result:', {
-        lobbyId: lobby.id,
-        gameSession: gameSession ? {
-          id: gameSession.id,
-          creatorId: gameSession.creatorId
-        } : null,
-        timestamp: new Date().toISOString()
       });
 
       if (!gameSession) {
@@ -392,28 +375,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
-      // Сохраняем данные в Redis
-      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
-      console.log('🔍 [CreateLobby] Existing player data:', {
-        telegramId: data.telegramId,
-        existingData: existingPlayerData,
-        timestamp: new Date().toISOString()
-      });
-
+      // Сохраняем данные игрока
       await this.saveToRedis(`player:${data.telegramId}`, {
-        ...existingPlayerData,
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
         newUser: isNewUser
-      });
-
-      // socketId сохраняется ТОЛЬКО при создании лобби и больше не обновляется
-      await this.saveToRedis(`lobby:${lobby.id}`, {
-        creatorId: data.telegramId,
-        status: 'active',
-        createdAt: Date.now(),
-        socketId: client.id
       });
       
       // Сохраняем связь клиент-лобби
@@ -464,23 +431,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     try {
-      // Проверяем существование лобби
-      const lobby = await this.gameService.getLobby(data.lobbyId);
-      if (!lobby) {
+      // Получаем данные лобби из Redis
+      const lobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
+      if (!lobbyData) {
         throw new Error('Lobby not found');
       }
 
-      if (lobby.status !== 'active') {
+      if (lobbyData.status !== 'active') {
         throw new Error('Lobby is not active');
       }
 
       // Определяем роль игрока
-      const role = lobby.creatorId === data.telegramId ? 'creator' : 'opponent';
+      const role = lobbyData.creatorId === data.telegramId ? 'creator' : 'opponent';
       const marker = role === 'creator' ? '❌' : '⭕';
 
       // Обновляем данные лобби
       await this.saveToRedis(`lobby:${data.lobbyId}`, {
-        ...lobby,
+        ...lobbyData,
         opponentId: data.telegramId,
         lastAction: 'opponent_joined',
         timestamp: Date.now()
@@ -499,43 +466,38 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(roomId);
       client.join(data.lobbyId);
 
-      // Получаем существующую игровую сессию
-      const gameSession = await this.gameService.getGameSession(data.lobbyId);
-      if (!gameSession) {
-        throw new Error('Game session not found');
-      }
-
-      // Обновляем игровую сессию с ID оппонента
-      const updatedSession = await this.gameService.updateGameSession(data.lobbyId, {
-        opponentId: data.telegramId,
-        opponentMarker: '⭕'
-      });
-
-      if (!updatedSession) {
-        throw new Error('Failed to update game session');
-      }
-
-      // Получаем состояние игры
-      const gameState = await this.gameService.getGameState(data.lobbyId);
-      if (!gameState) {
-        throw new Error('Failed to get game state');
-      }
-
       // Сохраняем связь клиент-игра
       this.clientGames.set(data.telegramId, data.lobbyId);
       this.clientLobbies.set(data.telegramId, data.lobbyId);
 
       // Отправляем события
       this.server.to(roomId).emit('gameStart', {
-        startTime: gameState.startedAt,
-        creatorId: gameState.gameSession.creatorId,
+        startTime: lobbyData.startTime,
+        creatorId: lobbyData.creatorId,
         opponentId: data.telegramId,
         creatorMarker: '❌',
         opponentMarker: '⭕'
       });
 
       // Отправляем текущее состояние игры
-      this.server.to(roomId).emit('gameState', gameState);
+      this.server.to(roomId).emit('gameState', {
+        board: lobbyData.board,
+        currentPlayer: lobbyData.currentTurn,
+        scale: 1,
+        position: { x: 0, y: 0 },
+        time: 0,
+        playerTime1: lobbyData.creatorTime,
+        playerTime2: lobbyData.opponentTime,
+        startedAt: lobbyData.startTime,
+        lastMoveTime: Date.now(),
+        maxMoveTime: MAX_MOVE_TIME,
+        gameSession: {
+          id: data.lobbyId,
+          creatorId: lobbyData.creatorId,
+          opponentId: data.telegramId,
+          lobbyId: data.lobbyId
+        }
+      });
 
       console.log('✅ [JoinLobby] Successfully joined lobby and started game:', {
         lobbyId: data.lobbyId,
@@ -563,8 +525,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: MakeMoveDto
   ) {
     // Получаем текущее состояние игры из Redis
-    const roomId = data.gameId.replace(/^lobby/, 'room');
-    const gameData = await this.getFromRedis(`game:${roomId}`);
+    const gameData = await this.getFromRedis(`lobby:${data.gameId}`);
     if (!gameData) {
       return { status: 'error', message: 'Game session not found' };
     }
@@ -576,7 +537,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const winner = gameData.currentTurn === String(gameData.creatorId) ? gameData.opponentId : gameData.creatorId;
       
       // Очищаем данные игры из Redis
-      await this.redis.del(`game:${data.gameId}`);
+      await this.redis.del(`lobby:${data.gameId}`);
       
       this.server.to(data.gameId).emit('gameEnded', {
         winner,
@@ -607,12 +568,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     };
 
     // Сохраняем обновленное состояние в Redis
-    await this.saveToRedis(`game:${data.gameId}`, updatedGameData);
+    await this.saveToRedis(`lobby:${data.gameId}`, updatedGameData);
 
     // Обновляем TTL для всех связанных ключей
-    await this.updateTTL(`game:${data.gameId}`);
-    await this.updateTTL(`player:${data.player}`);
     await this.updateTTL(`lobby:${data.gameId}`);
+    await this.updateTTL(`player:${data.player}`);
 
     this.server.to(data.gameId).emit('moveMade', {
       moveId: `move_${currentTime}`,
@@ -636,20 +596,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: UpdatePlayerTimeDto
   ) {
-    const session = await this.gameService.getGameSession(data.gameId);
-    
-    if (!session) {
+    const gameData = await this.getFromRedis(`lobby:${data.gameId}`);
+    if (!gameData) {
       return { status: 'error', message: 'Game session not found' };
     }
 
-    const updatedSession = await this.gameService.updateGameSession(data.gameId, {
-      playerTime1: data.playerTimes.playerTime1,
-      playerTime2: data.playerTimes.playerTime2
-    });
+    // Обновляем время игроков
+    const updatedGameData = {
+      ...gameData,
+      creatorTime: data.playerTimes.playerTime1,
+      opponentTime: data.playerTimes.playerTime2,
+      lastAction: 'time_update',
+      timestamp: Date.now()
+    };
 
+    // Сохраняем обновленные данные
+    await this.saveToRedis(`lobby:${data.gameId}`, updatedGameData);
+
+    // Отправляем обновленное время всем игрокам
     this.server.to(data.gameId).emit('timeUpdated', {
-      playerTime1: updatedSession.playerTime1,
-      playerTime2: updatedSession.playerTime2
+      playerTime1: updatedGameData.creatorTime,
+      playerTime2: updatedGameData.opponentTime
     });
 
     return { status: 'success' };
@@ -661,14 +628,39 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: GameOverDto
   ) {
-    await this.gameService.endGameSession(data.gameId, data.winner);
-    this.server.to(data.gameId).emit('gameEnded', { winner: data.winner });
-    
-    const session = await this.gameService.getGameSession(data.gameId);
-    if (session) {
-      this.clientGames.delete(session.creatorId);
-      this.clientGames.delete(session.opponentId);
+    const gameData = await this.getFromRedis(`lobby:${data.gameId}`);
+    if (!gameData) {
+      return { status: 'error', message: 'Game session not found' };
     }
+
+    // Обновляем статус игры
+    const updatedGameData = {
+      ...gameData,
+      status: 'finished',
+      winner: data.winner,
+      lastAction: 'game_over',
+      timestamp: Date.now()
+    };
+
+    // Сохраняем финальное состояние
+    await this.saveToRedis(`lobby:${data.gameId}`, updatedGameData);
+
+    // Отправляем событие окончания игры
+    this.server.to(data.gameId).emit('gameEnded', { 
+      winner: data.winner,
+      statistics: {
+        totalTime: Math.floor((Date.now() - gameData.startTime) / 1000),
+        moves: gameData.board.filter((cell: string) => cell !== '').length,
+        playerTime1: gameData.creatorTime,
+        playerTime2: gameData.opponentTime
+      }
+    });
+    
+    // Очищаем связи клиент-игра
+    this.clientGames.delete(gameData.creatorId);
+    this.clientGames.delete(gameData.opponentId);
+
+    return { status: 'success' };
   }
 
   @SubscribeMessage('joinGame')

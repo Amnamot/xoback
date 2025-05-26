@@ -382,6 +382,16 @@ export class GameService {
     opponentMarker: '⭕' | '❌';
     startTime: number;
   }): Promise<GameSession> {
+    console.log('🎮 [CreateGameSession] Starting game session creation:', {
+      lobbyId,
+      creatorId: data.creatorId,
+      opponentId: data.opponentId,
+      creatorMarker: data.creatorMarker,
+      opponentMarker: data.opponentMarker,
+      startTime: data.startTime,
+      timestamp: new Date().toISOString()
+    });
+
     const gameSession: GameSession = {
       id: lobbyId,
       creatorId: data.creatorId,
@@ -398,8 +408,38 @@ export class GameService {
       lastMoveTime: Date.now()
     };
 
-    await this.redis.set(`game:${gameSession.id}`, JSON.stringify(gameSession));
-    return gameSession;
+    console.log('📝 [CreateGameSession] Game session object created:', {
+      sessionId: gameSession.id,
+      creatorId: gameSession.creatorId,
+      currentTurn: gameSession.currentTurn,
+      boardSize: gameSession.board.length,
+      timestamp: new Date().toISOString()
+    });
+
+    try {
+      // Сохраняем в Redis
+      await this.redis.set(`lobby:${gameSession.id}`, JSON.stringify({
+        ...gameSession,
+        status: 'active',
+        createdAt: Date.now()
+      }));
+
+      console.log('✅ [CreateGameSession] Game session saved to Redis:', {
+        sessionId: gameSession.id,
+        redisKey: `lobby:${gameSession.id}`,
+        ttl: await this.redis.ttl(`lobby:${gameSession.id}`),
+        timestamp: new Date().toISOString()
+      });
+
+      return gameSession;
+    } catch (error) {
+      console.error('❌ [CreateGameSession] Error saving game session:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        sessionId: gameSession.id,
+        timestamp: new Date().toISOString()
+      });
+      throw error;
+    }
   }
 
   getGameSession(gameId: string): GameSession | null {
