@@ -497,6 +497,29 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Запускаем игру
       await this.gameService.startGame(data.lobbyId);
 
+      // Получаем обновленную игровую сессию
+      const updatedGameSession = await this.gameService.getGameSession(data.lobbyId);
+      if (!updatedGameSession) {
+        console.error('❌ Failed to get game session after start:', data.lobbyId);
+        return { 
+          status: 'error',
+          message: 'Failed to get game session',
+          timestamp: Date.now()
+        };
+      }
+
+      // Отправляем событие начала игры
+      const roomId = data.lobbyId.replace(/^lobby/, 'room');
+      this.server.to(roomId).emit('gameStart', {
+        gameId: data.lobbyId,
+        startTime: updatedGameSession.startedAt,
+        creatorId: updatedGameSession.creatorId,
+        opponentId: updatedGameSession.opponentId,
+        creatorMarker: updatedGameSession.creatorMarker,
+        opponentMarker: updatedGameSession.opponentMarker,
+        currentTurn: updatedGameSession.currentTurn
+      });
+
       // Сохраняем данные игрока
       await this.saveToRedis(`player:${data.telegramId}`, {
         lobbyId: data.lobbyId,
@@ -506,7 +529,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Сохраняем связь клиент-лобби
-      const roomId = data.lobbyId.replace(/^lobby/, 'room');
       this.playerStates.set(data.telegramId, {
         roomId: roomId,
         role: 'opponent',
