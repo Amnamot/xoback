@@ -424,43 +424,134 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('createLobby')
+  @UsePipes(new ValidationPipe())
   async handleCreateLobby(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: CreateLobbyDto
   ) {
+    console.log('🎮 Handling createLobby request:', { 
+      telegramId: data.telegramId, 
+      socketId: client.id,
+      rooms: Array.from(client.rooms),
+      adapter: this.server.sockets.adapter.rooms.size
+    });
+    
     try {
-      console.log('🎮 [GameGateway] Creating lobby:', {
-        telegramId: data.telegramId,
-        socketId: client.id,
-        timestamp: new Date().toISOString()
-      });
-
-      // Создаем лобби
+      // Создание лобби через GameService
       const lobby = await this.gameService.createLobby(data.telegramId);
       
       if (!lobby) {
-        throw new Error('Failed to create lobby');
+        console.warn('⚠️ Lobby creation returned null');
+        return { 
+          status: 'error',
+          message: 'Failed to create lobby: null response',
+          timestamp: Date.now()
+        };
       }
       
-      // Создаем инвайт и отправляем сообщение
-      const inviteResult = await this.createAndSendInvite(lobby.id, data.telegramId);
+      console.log('✅ Lobby created:', { 
+        lobbyId: lobby.id, 
+        creatorId: data.telegramId,
+        status: lobby.status
+      });
       
-      console.log('✅ [GameGateway] Lobby and invite created:', {
-        lobbyId: lobby.id,
-        inviteId: inviteResult.inviteId,
-        messageId: inviteResult.messageId,
+      // Проверяем существование пользователя в таблице User
+      const user = await this.gameService.findUserByTelegramId(data.telegramId);
+      const isNewUser = !user;
+      console.log('👤 [CreateLobby] User check:', {
+        telegramId: data.telegramId,
+        isNewUser,
         timestamp: new Date().toISOString()
       });
 
-      return {
-        status: 'success',
+      // Сохраняем данные в Redis
+      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
+      console.log('🔍 [CreateLobby] Existing player data:', {
+        telegramId: data.telegramId,
+        existingData: existingPlayerData,
+        timestamp: new Date().toISOString()
+      });
+
+      await this.saveToRedis(`player:${data.telegramId}`, {
+        ...existingPlayerData,
         lobbyId: lobby.id,
-        inviteId: inviteResult.inviteId,
-        messageId: inviteResult.messageId,
+        role: 'creator',
+        marker: '❌',
+        newUser: isNewUser  // Используем результат проверки в таблице User
+      });
+
+      // socketId сохраняется ТОЛЬКО при создании лобби и больше не обновляется
+      await this.saveToRedis(`lobby:${lobby.id}`, {
+        creatorId: data.telegramId,
+        status: 'active',
+        createdAt: Date.now(),
+        socketId: client.id // Сохраняем socketId только при создании лобби
+      });
+      
+      console.log('🔌 [Socket] Initial socketId saved for lobby:', {
+        lobbyId: lobby.id,
+        socketId: client.id,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Сохраняем связь клиент-лобби
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      this.playerStates.set(data.telegramId, {
+        roomId: roomId,
+        role: 'creator',
+        marker: '❌'
+      });
+      
+      console.log('🔗 Player state saved:', { 
+        telegramId: data.telegramId, 
+        roomId: roomId,
+        state: this.playerStates.get(data.telegramId),
+        timestamp: new Date().toISOString()
+      });
+      
+      // Добавляем клиента в комнату
+      client.join(roomId);
+      console.log('👥 Client joined room:', { 
+        socketId: client.id, 
+        roomId: roomId,
+        updatedRooms: Array.from(client.rooms)
+      });
+      
+      // Отправляем событие о готовности лобби
+      this.server.to(roomId).emit('lobbyReady', { 
+        lobbyId: lobby.id,
+        roomId: roomId,
+        timestamp: Date.now(),
+        creatorMarker: '❌'
+      });
+      console.log('❌ [Create Lobby] Sent creator marker:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        socketId: client.id,
+        timestamp: new Date().toISOString()
+      });
+      
+      return { 
+        status: 'created', 
+        lobbyId: lobby.id,
         timestamp: Date.now()
       };
     } catch (error) {
-      console.error('❌ [GameGateway] Error in handleCreateLobby:', error);
+      console.error('❌ Error in handleCreateLobby:', error);
+      
+      // Очищаем связи при ошибке
+      this.clientLobbies.delete(data.telegramId);
+      this.clientGames.delete(data.telegramId);
+      
+      console.log('🧹 Cleaned up client associations for:', {
+        telegramId: data.telegramId,
+        mappings: {
+          inClientGames: this.clientGames.has(data.telegramId),
+          inClientLobbies: this.clientLobbies.has(data.telegramId)
+        },
+        timestamp: new Date().toISOString()
+      });
+      
       return { 
         status: 'error',
         message: error instanceof Error ? error.message : 'Failed to create lobby',
@@ -604,6 +695,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           // Отправляем текущее состояние игры
           this.sendGameStateToSocket(client, gameDataJoin, data.lobbyId);
 
+          console.log('✅ [Creator Join] Successfully joined game:', {
+            lobbyId: data.lobbyId,
+            creatorId: data.telegramId,
+            gameState: {
+              board: gameDataJoin.board,
+              currentTurn: gameDataJoin.currentTurn,
+              lastMoveTime: gameDataJoin.lastMoveTime
+            },
+            timestamp: new Date().toISOString()
+          });
+
           return { status: 'creator_game_joined' };
         }
 
@@ -665,7 +767,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           lobbyId: data.lobbyId,
           role: mergedOpponentData.role,
           marker: mergedOpponentData.marker,
-          source: 'handleJoinLobby/opponent',
+          source: 'handleJoinLobby',
           timestamp: new Date().toISOString()
         });
 
@@ -960,88 +1062,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { status: 'success' };
   }
 
-  private async createAndSendInvite(lobbyId: string, creatorId: string) {
-    try {
-      console.log('🎮 [GameGateway] Creating and sending invite:', {
-        lobbyId,
-        creatorId,
-        timestamp: new Date().toISOString()
-      });
-
-      // Проверяем существование лобби
-      const lobby = await this.gameService.getLobby(lobbyId);
-      if (!lobby) {
-        throw new Error('Lobby not found');
-      }
-
-      // Создаем инвайт
-      const inviteId = `invite_${Date.now()}`;
-      const inviteData = {
-        id: inviteId,
-        lobbyId,
-        creatorId,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24 часа
-      };
-
-      // Сохраняем инвайт в Redis
-      await this.redis.set(
-        `invite:${inviteId}`,
-        JSON.stringify(inviteData),
-        'EX',
-        24 * 60 * 60 // 24 часа в секундах
-      );
-
-      // Формируем сообщение для Telegram
-      const message = {
-        text: `🎮 Приглашение в игру!\n\nНажмите кнопку ниже, чтобы присоединиться к игре.`,
-        reply_markup: {
-          inline_keyboard: [[
-            {
-              text: '🎮 Присоединиться к игре',
-              url: `https://t.me/${process.env.BOT_USERNAME}?start=invite_${inviteId}`
-            }
-          ]]
-        }
-      };
-
-      // Отправляем сообщение через Telegram Bot API
-      const response = await fetch(
-        `https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            chat_id: creatorId,
-            ...message
-          })
-        }
-      );
-
-      const result = await response.json();
-      
-      if (!result.ok) {
-        throw new Error(`Failed to send Telegram message: ${result.description}`);
-      }
-
-      console.log('✅ [GameGateway] Invite created and sent:', {
-        inviteId,
-        messageId: result.result.message_id,
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        inviteId,
-        messageId: result.result.message_id
-      };
-    } catch (error) {
-      console.error('❌ [GameGateway] Error in createAndSendInvite:', error);
-      throw error;
-    }
-  }
-
   @SubscribeMessage('createInvite')
   @UsePipes(new ValidationPipe())
   async handleCreateInvite(
@@ -1071,7 +1091,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Получаем лобби из GameService
-      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      let lobby = await this.gameService.findLobbyByCreator(data.telegramId);
       
       if (!lobby) {
         console.log('❌ [Invite] No matching lobby found for telegramId:', {
@@ -1083,7 +1103,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             players: redisState[2]
           }
         });
-        return { error: 'Lobby not found' };
+
+        // Пробуем создать новое лобби, если не найдено
+        console.log('🔄 [Invite] Attempting to create new lobby for creator:', {
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+
+        const newLobby = await this.gameService.createLobby(data.telegramId);
+        if (!newLobby) {
+          console.error('❌ [Invite] Failed to create new lobby:', {
+            telegramId: data.telegramId,
+            timestamp: new Date().toISOString()
+          });
+          return { error: 'Failed to create lobby' };
+        }
+
+        console.log('✅ [Invite] Created new lobby:', {
+          lobbyId: newLobby.id,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+
+        // Используем новое лобби
+        lobby = newLobby;
       }
 
       console.log('✅ [Invite] Found lobby:', {
@@ -1189,9 +1232,50 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Формируем сообщение для отправки
-      const result = await this.createAndSendInvite(lobby.id, data.telegramId);
+      const result = {
+        type: "article",
+        id: randomBytes(5).toString("hex"),
+        title: "Invitation to the game!",
+        description: "Click to accept the call!",
+        input_message_content: {
+          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe`,
+        },
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: "⚔️ Accept the battle 🛡",
+              url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+            }
+          ]]
+        },
+        thumbnail_url: "https://brown-real-meerkat-526.mypinata.cloud/ipfs/bafkreihszmccida3akvw4oshrwcixy5xnpimxiprjrnqo5aevzshj4foda",
+        thumbnail_width: 300,
+        thumbnail_height: 300,
+      };
 
-      return result;
+      console.log('📤 [Invite] Preparing Telegram API request:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Отправляем сообщение через Telegram Bot API
+      const BOT_TOKEN = this.configService.get("BOT_TOKEN");
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
+      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+      
+      const { data: response } = await firstValueFrom(this.httpService.get(url));
+      
+      console.log('📨 [Invite] Telegram API response:', {
+        response,
+        lobbyId: lobby.id,
+        timestamp: new Date().toISOString()
+      });
+
+      return { 
+        messageId: response.result.id, 
+        lobbyId: lobby.id 
+      };
     } catch (error) {
       console.error('🛑 [Invite] Error creating invite:', {
         error: error instanceof Error ? error.message : 'Unknown error',
