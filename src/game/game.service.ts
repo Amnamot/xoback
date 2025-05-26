@@ -771,4 +771,37 @@ export class GameService {
       }
     };
   }
+
+  async startGame(lobbyId: string): Promise<void> {
+    console.log('🎮 [StartGame] Starting game:', {
+      lobbyId,
+      timestamp: new Date().toISOString()
+    });
+
+    // Получаем игровую сессию
+    const gameSession = await this.getGameSession(lobbyId);
+    if (!gameSession) {
+      throw new Error(`Game session not found for lobby ${lobbyId}`);
+    }
+
+    // Обновляем время начала игры
+    gameSession.startedAt = Date.now();
+    gameSession.lastMoveTime = Date.now();
+
+    // Сохраняем обновленную сессию в памяти
+    this.activeSessions.set(lobbyId, gameSession);
+
+    // Сохраняем обновленную сессию в Redis
+    await this.redis.set(`lobby:${lobbyId}`, JSON.stringify({
+      ...gameSession,
+      status: 'active',
+      updatedAt: Date.now()
+    }), 'EX', 180);
+
+    console.log('✅ [StartGame] Game started:', {
+      lobbyId,
+      gameSessionId: gameSession.id,
+      timestamp: new Date().toISOString()
+    });
+  }
 } 

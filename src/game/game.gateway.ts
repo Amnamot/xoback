@@ -494,6 +494,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
+      // Запускаем игру
+      await this.gameService.startGame(data.lobbyId);
+
       // Сохраняем данные игрока
       await this.saveToRedis(`player:${data.telegramId}`, {
         lobbyId: data.lobbyId,
