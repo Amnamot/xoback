@@ -195,6 +195,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           return;
         }
 
+        // Проверяем существование пользователя в таблице User
+        const user = await this.gameService.findUserByTelegramId(data.user.id);
+        const isNewUser = !user;
+
+        // Сохраняем данные приглашенного игрока
+        await this.saveToRedis(`player:${data.user.id}`, {
+          lobbyId: data.start_param,
+          role: 'opponent',
+          marker: '⭕',
+          newUser: isNewUser,
+          name: data.user.first_name,
+          avatar: data.user.photo_url
+        });
+
+        // Обновляем данные лобби
+        await this.saveToRedis(`lobby:${data.start_param}`, {
+          ...lobbyData,
+          opponentId: data.user.id
+        });
+
         // Присоединяем к лобби
         await this.handleJoinLobby(client, {
           telegramId: data.user.id,
@@ -346,7 +366,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: '❌',
-        newUser: isNewUser  // Используем результат проверки в таблице User
+        newUser: isNewUser
       });
 
       // socketId сохраняется ТОЛЬКО при создании лобби и больше не обновляется
@@ -354,15 +374,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         creatorId: data.telegramId,
         status: 'active',
         createdAt: Date.now(),
-        socketId: client.id // Сохраняем socketId только при создании лобби
+        socketId: client.id
       });
       
-      console.log('🔌 [Socket] Initial socketId saved for lobby:', {
-        lobbyId: lobby.id,
-        socketId: client.id,
-        timestamp: new Date().toISOString()
+      // Создаем игровую сессию сразу после создания лобби
+      const gameSession = await this.gameService.createGameSession(lobby.id, {
+        creatorId: data.telegramId,
+        opponentId: '', // Пустой ID оппонента, так как он еще не подключился
+        creatorMarker: '❌',
+        opponentMarker: '⭕',
+        startTime: Date.now()
       });
-      
+
+      if (!gameSession) {
+        console.error('❌ [CreateLobby] Failed to create game session');
+        return { 
+          status: 'error',
+          message: 'Failed to create game session',
+          timestamp: Date.now()
+        };
+      }
+
       // Сохраняем связь клиент-лобби
       const roomId = lobby.id.replace(/^lobby/, 'room');
       this.playerStates.set(data.telegramId, {
@@ -371,20 +403,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         marker: '❌'
       });
       
-      console.log('🔗 Player state saved:', { 
-        telegramId: data.telegramId, 
-        roomId: roomId,
-        state: this.playerStates.get(data.telegramId),
-        timestamp: new Date().toISOString()
-      });
-      
       // Добавляем клиента в комнату
       client.join(roomId);
-      console.log('👥 Client joined room:', { 
-        socketId: client.id, 
-        roomId: roomId,
-        updatedRooms: Array.from(client.rooms)
-      });
+      client.join(lobby.id);
       
       // Отправляем событие о готовности лобби
       this.server.to(roomId).emit('lobbyReady', { 
@@ -392,12 +413,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         roomId: roomId,
         timestamp: Date.now(),
         creatorMarker: '❌'
-      });
-      console.log('❌ [Create Lobby] Sent creator marker:', {
-        lobbyId: lobby.id,
-        creatorId: data.telegramId,
-        socketId: client.id,
-        timestamp: new Date().toISOString()
       });
       
       return { 
@@ -407,20 +422,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       };
     } catch (error) {
       console.error('❌ Error in handleCreateLobby:', error);
-      
-      // Очищаем связи при ошибке
-      this.clientLobbies.delete(data.telegramId);
-      this.clientGames.delete(data.telegramId);
-      
-      console.log('🧹 Cleaned up client associations for:', {
-        telegramId: data.telegramId,
-        mappings: {
-          inClientGames: this.clientGames.has(data.telegramId),
-          inClientLobbies: this.clientLobbies.has(data.telegramId)
-        },
-        timestamp: new Date().toISOString()
-      });
-      
       return { 
         status: 'error',
         message: error instanceof Error ? error.message : 'Failed to create lobby',
@@ -462,39 +463,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { status: 'error', message: 'Lobby is not active' };
       }
 
-      // Определяем роль игрока
-      const isCreator = lobby.creatorId === data.telegramId;
-      const role = isCreator ? 'creator' : 'opponent';
-      const marker = isCreator ? '❌' : '⭕';
-
-      // Обновляем данные лобби
-      await this.gameService.updateLobby(data.lobbyId, {
-        ...lobby,
-        opponentId: isCreator ? lobby.opponentId : data.telegramId,
-        status: 'closed'
-      });
-
       // Присоединяем к игровой комнате
       const roomId = data.lobbyId.replace(/^lobby/, 'room');
       await client.join(roomId);
       await client.join(data.lobbyId);
-
-      // Создаем игровую сессию
-      const gameSession = await this.gameService.createGameSession(data.lobbyId, {
-        creatorId: lobby.creatorId,
-        opponentId: data.telegramId,
-        creatorMarker: '❌',
-        opponentMarker: '⭕',
-        startTime: Date.now()
-      });
-
-      if (!gameSession) {
-        console.error('❌ [JoinLobby] Failed to create game session:', {
-          lobbyId: data.lobbyId,
-          timestamp: new Date().toISOString()
-        });
-        return { status: 'error', message: 'Failed to create game session' };
-      }
 
       // Получаем состояние игры
       const gameState = await this.gameService.getGameState(data.lobbyId);
@@ -510,13 +482,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.clientGames.set(data.telegramId, data.lobbyId);
       this.clientLobbies.set(data.telegramId, data.lobbyId);
 
-      // Отправляем события только после успешного создания сессии и получения состояния
+      // Отправляем события
       this.server.to(roomId).emit('gameStart', {
-        startTime: gameSession.startedAt,
-        creatorId: gameSession.creatorId,
-        opponentId: gameSession.opponentId,
-        creatorMarker: gameSession.creatorMarker,
-        opponentMarker: gameSession.opponentMarker
+        startTime: gameState.startedAt,
+        creatorId: gameState.gameSession.creatorId,
+        opponentId: data.telegramId,
+        creatorMarker: '❌',
+        opponentMarker: '⭕'
       });
 
       // Отправляем текущее состояние игры
@@ -526,12 +498,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: data.lobbyId,
         roomId,
         telegramId: data.telegramId,
-        role,
-        marker,
         timestamp: new Date().toISOString()
       });
 
-      return { status: 'success', role, marker };
+      return { status: 'success' };
     } catch (error) {
       console.error('❌ [JoinLobby] Error:', {
         error: error instanceof Error ? error.message : 'Unknown error',
