@@ -603,7 +603,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     // Проверяем существование игровой комнаты
-    const gameRoom = `room_${data.lobbyId.replace('lobby_', '')}`;
+    const gameRoom = data.lobbyId;
     const roomExists = await this.redis.exists(gameRoom);
     if (!roomExists) {
       console.error('❌ [JoinLobby] Game room not found:', {
