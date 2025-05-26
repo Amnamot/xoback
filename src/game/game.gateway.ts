@@ -478,16 +478,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(roomId);
       client.join(data.lobbyId);
 
+      // Получаем существующую игровую сессию
+      const gameSession = await this.gameService.getGameSession(data.lobbyId);
+      if (!gameSession) {
+        throw new Error('Game session not found');
+      }
+
       // Обновляем игровую сессию с ID оппонента
-      const gameSession = await this.gameService.createGameSession(data.lobbyId, {
-        creatorId: lobby.creatorId,
+      const updatedSession = await this.gameService.updateGameSession(data.lobbyId, {
         opponentId: data.telegramId,
-        creatorMarker: '❌',
-        opponentMarker: '⭕',
-        startTime: Date.now()
+        opponentMarker: '⭕'
       });
 
-      if (!gameSession) {
+      if (!updatedSession) {
         throw new Error('Failed to update game session');
       }
 
