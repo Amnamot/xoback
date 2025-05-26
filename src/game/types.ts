@@ -2,6 +2,7 @@
 export interface Lobby {
   id: string;           // ID лобби
   creatorId: string;    // telegramId создателя
+  opponentId?: string;  // telegramId соперника (опциональное)
   createdAt: number;    // время создания
   status: 'active' | 'pending' | 'closed';  // статус лобби
 }
