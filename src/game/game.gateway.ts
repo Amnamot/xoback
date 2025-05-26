@@ -141,260 +141,66 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      // Получаем initData
-      const initData = client.handshake.query.initData as string;
-      
-      if (!initData) {
-        console.error('❌ [Connection] No initData provided');
-        client.disconnect();
-        return;
-      }
-
-      // Получаем данные пользователя из initData
-      const { user, start_param } = this.initDataService.parseInitData(initData);
-      
-      if (!user) {
-        console.error('❌ [Connection] No user data in initData');
-        client.disconnect();
-        return;
-      }
-
-      const telegramId = user.id.toString();
-
-      console.log('🔌 [Connection] New client connection attempt:', {
-        telegramId,
-        socketId: client.id,
-        timestamp: new Date().toISOString(),
-        connectionType: 'websocket',
-        query: client.handshake.query,
-        existingSocket: !!this.connectedClients.get(telegramId)
-      });
-
-      if (!telegramId) {
-        console.error('❌ [Connection] No telegramId provided');
-        client.disconnect();
-        return;
-      }
-
-      if (start_param) {
-        console.log('🎯 [Connection] Processing invited player:', {
-          telegramId,
-          start_param,
+      const data = await this.initDataService.parseInitData(client.handshake.query.initData as string);
+      if (!data) {
+        console.error('❌ [Connection] Invalid initData:', {
+          socketId: client.id,
           timestamp: new Date().toISOString()
         });
-
-        // Автоматически присоединяем к лобби
-        const lobbyData = await this.getFromRedis(`lobby:${start_param}`);
-        if (!lobbyData) {
-          console.error('❌ [Connection] Lobby not found:', {
-            telegramId,
-            start_param,
-            timestamp: new Date().toISOString()
-          });
-          client.disconnect();
-          return;
-        }
-
-        // Проверяем, не существует ли уже игровая сессия
-        const roomId = start_param.replace(/^lobby/, 'room');
-        const gameData = await this.getFromRedis(`game:${roomId}`);
-        
-        if (gameData) {
-          console.log('🎮 [Connection] Found existing game session:', {
-            telegramId,
-            lobbyId: start_param,
-            timestamp: new Date().toISOString()
-          });
-          
-          // Подключаем к существующей игре
-          client.join(start_param);
-          this.clientGames.set(telegramId, start_param);
-          
-          // Отправляем текущее состояние игры
-          this.sendGameStateToSocket(client, gameData, start_param);
-        } else {
-          // Если игровой сессии нет, присоединяемся к лобби
-          const joinResult = await this.handleJoinLobby(client, {
-            telegramId,
-            lobbyId: start_param
-          });
-
-          if (joinResult && joinResult.status === 'error') {
-            console.error('❌ [Connection] Failed to join lobby:', {
-              error: joinResult.message,
-              telegramId,
-              start_param,
-              timestamp: new Date().toISOString()
-            });
-            client.disconnect();
-            return;
-          }
-        }
+        client.disconnect();
+        return;
       }
 
-      // Сохраняем сокет
-      this.connectedClients.set(telegramId, client);
-      
-      // Сохраняем данные пользователя из initData
-      if (initData) {
-        const { user } = this.initDataService.parseInitData(initData);
-        if (user) {
-          const existingData = await this.getFromRedis(`player:${telegramId}`);
-          console.log('📝 [Connection] Parsing initData:', {
-            telegramId,
-            existingData,
-            newData: {
-              first_name: user.first_name,
-              photo_url: user.photo_url
-            },
-            timestamp: new Date().toISOString()
-          });
-
-          await this.saveToRedis(`player:${telegramId}`, {
-            ...existingData,
-            name: user.first_name,
-            avatar: user.photo_url
-          });
-          console.log('✅ [Connection] Saved user data to Redis:', {
-            telegramId,
-            existingData,
-            newData: {
-              name: user.first_name,
-              avatar: user.photo_url
-            },
-            timestamp: new Date().toISOString()
-          });
-
-          // Проверяем сохранение
-          const savedData = await this.getFromRedis(`player:${telegramId}`);
-          console.log('🔍 [Connection] Verification of saved data:', {
-            telegramId,
-            savedData,
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-
-      // Проверяем существующие данные игрока
-      const playerData = await this.getFromRedis(`player:${telegramId}`);
-      
-      console.log('👤 [Connection] Player state check:', {
-        telegramId,
-        hasPlayerData: Boolean(playerData),
-        hasLobbyId: Boolean(playerData?.lobbyId),
-        role: playerData?.role,
-        marker: playerData?.marker,
-        timestamp: new Date().toISOString()
+      console.log('🔌 [Connection] New client connection attempt:', {
+        telegramId: data.telegramId,
+        socketId: client.id,
+        timestamp: new Date().toISOString(),
+        connectionType: client.conn.transport.name,
+        query: client.handshake.query,
+        existingSocket: this.connectedClients.has(data.telegramId)
       });
 
-      if (playerData?.lobbyId) {
-        console.log('🔄 [State Restore] Found player data:', {
-          telegramId,
-          playerData,
-          timestamp: new Date().toISOString(),
-          connectionState: {
-            inClientGames: this.clientGames.has(telegramId),
-            inClientLobbies: this.clientLobbies.has(telegramId),
-            inConnectedClients: this.connectedClients.has(telegramId)
-          }
+      // Сохраняем сокет
+      this.connectedClients.set(data.telegramId, client);
+
+      // Получаем данные игрока
+      const playerData = await this.getFromRedis(`player:${data.telegramId}`);
+      if (!playerData) {
+        console.log('👤 [Connection] New player connected:', {
+          telegramId: data.telegramId,
+          socketId: client.id,
+          timestamp: new Date().toISOString()
         });
+        return;
+      }
 
-        // Получаем данные лобби
-        const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
-        if (lobbyData) {
-          console.log('🎮 [State Restore] Found lobby data:', {
-            lobbyId: playerData.lobbyId,
-            lobbyData,
-            lobbyStatus: lobbyData.status,
-            isCreator: String(lobbyData.creatorId) === String(telegramId),
-            socketId: lobbyData.socketId,
-            currentSocketId: client.id,
-            timestamp: new Date().toISOString()
-          });
+      // Проверяем наличие активной игры
+      if (playerData.gameId) {
+        const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
+        if (gameData) {
+          // Подключаем к комнате игры
+          client.join(playerData.gameId);
+          this.clientGames.set(data.telegramId, playerData.gameId);
 
-          // Используем существующий socketId из лобби
-          const originalSocketId = lobbyData.socketId;
-          console.log('🔌 [Socket] Using original socketId from lobby:', {
-            lobbyId: playerData.lobbyId,
-            originalSocketId,
-            currentSocketId: client.id,
-            timestamp: new Date().toISOString()
-          });
-
-          // Проверяем наличие активной игры
-          const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
-          const gameData = await this.getFromRedis(`game:${roomId}`);
-          
-          console.log('🎲 [State Restore] Game data check:', {
-            lobbyId: playerData.lobbyId,
-            hasGameData: Boolean(gameData),
-            gameState: gameData ? {
-              currentTurn: gameData.currentTurn,
-              lastMoveTime: gameData.lastMoveTime,
-              board: gameData.board
-            } : null,
-            timestamp: new Date().toISOString()
-          });
-
-          if (gameData || lobbyData.status === 'closed') {
-            // Если есть активная игра или лобби в статусе 'closed' - подключаем к игре
-            console.log('🎯 [State Restore] Restoring active game:', {
-              lobbyId: playerData.lobbyId,
-              playerRole: playerData.role,
-              lobbyStatus: lobbyData.status,
-              hasGameData: Boolean(gameData),
-              isCurrentTurn: gameData?.currentTurn === telegramId,
-              timestamp: new Date().toISOString()
-            });
-
-            client.join(playerData.lobbyId);
-            this.clientGames.set(telegramId, playerData.lobbyId);
-
-            // Обновляем TTL для всех ключей
-            await this.updateTTL(`player:${telegramId}`);
-            await this.updateTTL(`lobby:${playerData.lobbyId}`);
-            await this.updateTTL(`game:${roomId}`);
-
-            // Отправляем текущее состояние игры
-            this.sendGameStateToSocket(client, gameData, playerData.lobbyId);
-
-            console.log('✅ [State Restore] Game state sent:', {
-              telegramId,
-              lobbyId: playerData.lobbyId,
-              currentPlayer: gameData?.currentTurn === telegramId,
-              timestamp: new Date().toISOString()
-            });
-          } else if (playerData.inviteSent || lobbyData.status === 'pending') {
-            // Восстанавливаем лобби для создателя с отправленным инвайтом
-            console.log('📨 [Reconnect] Restoring lobby after invite:', {
-              telegramId,
-              lobbyId: playerData.lobbyId,
-              inviteSent: playerData.inviteSent,
-              lobbyStatus: lobbyData.status,
-              timestamp: new Date().toISOString()
-            });
-
-            client.join(playerData.lobbyId);
-            this.clientLobbies.set(telegramId, playerData.lobbyId);
-
-            // Обновляем TTL
-            await this.updateTTL(`player:${telegramId}`);
-            await this.updateTTL(`lobby:${playerData.lobbyId}`);
-
-            // Отправляем события для показа WaitModal
-            client.emit('setShowWaitModal', {
-              show: true,
-              creatorMarker: playerData.marker
-            });
-
-            this.server.to(playerData.lobbyId).emit('lobbyReady', { 
-              lobbyId: playerData.lobbyId,
-              timestamp: Date.now(),
-              creatorMarker: playerData.marker
-            });
-          }
+          // Отправляем текущее состояние игры
+          this.sendGameStateToSocket(client, gameData, playerData.gameId);
         }
       }
+
+      // Проверяем наличие активного лобби
+      if (playerData.lobbyId) {
+        const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
+        if (lobbyData) {
+          // Подключаем к комнате лобби
+          client.join(playerData.lobbyId);
+          this.clientLobbies.set(data.telegramId, playerData.lobbyId);
+
+          // Обновляем TTL для всех ключей
+          await this.updateTTL(`player:${data.telegramId}`);
+          await this.updateTTL(`lobby:${playerData.lobbyId}`);
+        }
+      }
+
     } catch (error) {
       console.error('❌ [Connection] Error:', error);
       client.disconnect();
@@ -1519,6 +1325,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Отправляет актуальное состояние игры конкретному сокету
    */
   private sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
+    if (!gameSession) {
+      console.log('⚠️ [GameGateway] Cannot send game state: gameSession is null', {
+        socketId: socket.id,
+        lobbyId,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
     socket.emit('gameState', {
       board: gameSession.board,
       currentPlayer: gameSession.currentTurn,
