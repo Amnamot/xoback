@@ -631,14 +631,17 @@ export class GameService {
       const existingGame = await this.prisma.game.findFirst({
         where: {
           OR: [
-            { createdBy: telegramId },
-            { rival: telegramId }
+            {
+              createdBy: String(telegramId)
+            },
+            {
+              rival: String(telegramId)
+            }
           ]
         }
       });
 
-      // Если игра не найдена - пользователь новый
-      return !existingGame;
+      return !!existingGame;
     } catch (error) {
       console.error('Error checking user in Game table:', error);
       // Пробрасываем ошибку дальше для обработки на уровне выше
