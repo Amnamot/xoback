@@ -1,13 +1,5 @@
 export const MAX_MOVE_TIME = 30000; // 30 seconds
 
-export interface Lobby {
-  id: string;
-  creatorId: string;
-  opponentId?: string;
-  status: 'pending' | 'active' | 'closed';
-  createdAt: number;
-}
-
 export interface GameState {
   board: Record<string, string>;
   currentPlayer: string;
