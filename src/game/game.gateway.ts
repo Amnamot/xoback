@@ -234,12 +234,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
         if (lobbyData) {
           // Подключаем к комнате лобби
-          client.join(playerData.lobbyId);
+          const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
+          client.join(roomId);
           this.clientLobbies.set(data.user.id, playerData.lobbyId);
-
-          // Обновляем TTL для всех ключей
-          await this.updateTTL(`player:${data.user.id}`);
-          await this.updateTTL(`lobby:${playerData.lobbyId}`);
         }
       }
 
@@ -883,17 +880,20 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Если создатель не в комнате, добавляем его
-      if (!client.rooms.has(lobby.id)) {
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      if (!client.rooms.has(roomId)) {
         console.log('⚠️ [Invite] Creator not in room, rejoining:', {
           lobbyId: lobby.id,
+          roomId: roomId,
           creatorId: data.telegramId,
           timestamp: new Date().toISOString()
         });
         
-        client.join(lobby.id);
+        client.join(roomId);
         
         console.log('✅ [Invite] Creator rejoined room:', {
           lobbyId: lobby.id,
+          roomId: roomId,
           creatorId: data.telegramId,
           newRooms: Array.from(client.rooms || []),
           timestamp: new Date().toISOString()
@@ -1298,7 +1298,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           // Подключаем к комнате лобби
-          client.join(playerData.lobbyId);
+          const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
+          client.join(roomId);
           this.clientLobbies.set(data.telegramId, playerData.lobbyId);
 
           // Обновляем TTL для всех ключей
@@ -1425,6 +1426,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           for (const [telegramId, lid] of this.clientLobbies) {
             if (lid === lobbyId) {
               this.clientLobbies.delete(telegramId);
+              // Отправляем событие в правильную комнату
+              const roomId = lobbyId.replace(/^lobby/, 'room');
+              this.server.to(roomId).emit('lobbyDeleted', {
+                reason: 'Lobby expired',
+                timestamp: Date.now()
+              });
             }
           }
         }
