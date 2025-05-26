@@ -184,20 +184,51 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         // Автоматически присоединяем к лобби
-        const joinResult = await this.handleJoinLobby(client, {
-          telegramId,
-          lobbyId: start_param
-        });
-
-        if (joinResult && joinResult.status === 'error') {
-          console.error('❌ [Connection] Failed to join lobby:', {
-            error: joinResult.message,
+        const lobbyData = await this.getFromRedis(`lobby:${start_param}`);
+        if (!lobbyData) {
+          console.error('❌ [Connection] Lobby not found:', {
             telegramId,
             start_param,
             timestamp: new Date().toISOString()
           });
           client.disconnect();
           return;
+        }
+
+        // Проверяем, не существует ли уже игровая сессия
+        const roomId = start_param.replace(/^lobby/, 'room');
+        const gameData = await this.getFromRedis(`game:${roomId}`);
+        
+        if (gameData) {
+          console.log('🎮 [Connection] Found existing game session:', {
+            telegramId,
+            lobbyId: start_param,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Подключаем к существующей игре
+          client.join(start_param);
+          this.clientGames.set(telegramId, start_param);
+          
+          // Отправляем текущее состояние игры
+          this.sendGameStateToSocket(client, gameData, start_param);
+        } else {
+          // Если игровой сессии нет, присоединяемся к лобби
+          const joinResult = await this.handleJoinLobby(client, {
+            telegramId,
+            lobbyId: start_param
+          });
+
+          if (joinResult && joinResult.status === 'error') {
+            console.error('❌ [Connection] Failed to join lobby:', {
+              error: joinResult.message,
+              telegramId,
+              start_param,
+              timestamp: new Date().toISOString()
+            });
+            client.disconnect();
+            return;
+          }
         }
       }
 
