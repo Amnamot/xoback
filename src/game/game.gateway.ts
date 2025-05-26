@@ -353,6 +353,45 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
 
+      // Добавляем логирование перед созданием игровой сессии
+      console.log('🎮 [CreateLobby] Starting game session creation:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Создаем игровую сессию сразу после создания лобби
+      const gameSession = await this.gameService.createGameSession(lobby.id, {
+        creatorId: data.telegramId,
+        opponentId: '', // Пустой ID оппонента, так как он еще не подключился
+        creatorMarker: '❌',
+        opponentMarker: '⭕',
+        startTime: Date.now()
+      });
+
+      // Добавляем логирование после создания игровой сессии
+      console.log('🎮 [CreateLobby] Game session creation result:', {
+        lobbyId: lobby.id,
+        gameSession: gameSession ? {
+          id: gameSession.id,
+          creatorId: gameSession.creatorId
+        } : null,
+        timestamp: new Date().toISOString()
+      });
+
+      if (!gameSession) {
+        console.error('❌ [CreateLobby] Failed to create game session:', {
+          lobbyId: lobby.id,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return { 
+          status: 'error',
+          message: 'Failed to create game session',
+          timestamp: Date.now()
+        };
+      }
+
       // Сохраняем данные в Redis
       const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
       console.log('🔍 [CreateLobby] Existing player data:', {
@@ -377,24 +416,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         socketId: client.id
       });
       
-      // Создаем игровую сессию сразу после создания лобби
-      const gameSession = await this.gameService.createGameSession(lobby.id, {
-        creatorId: data.telegramId,
-        opponentId: '', // Пустой ID оппонента, так как он еще не подключился
-        creatorMarker: '❌',
-        opponentMarker: '⭕',
-        startTime: Date.now()
-      });
-
-      if (!gameSession) {
-        console.error('❌ [CreateLobby] Failed to create game session');
-        return { 
-          status: 'error',
-          message: 'Failed to create game session',
-          timestamp: Date.now()
-        };
-      }
-
       // Сохраняем связь клиент-лобби
       const roomId = lobby.id.replace(/^lobby/, 'room');
       this.playerStates.set(data.telegramId, {
