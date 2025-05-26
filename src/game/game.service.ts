@@ -4,6 +4,27 @@ import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 import { GameSession, Lobby } from './types';
 
+const MAX_MOVE_TIME = 30000; // 30 секунд на ход
+
+interface GameState {
+  board: any[];
+  currentPlayer: string;
+  scale: number;
+  position: { x: number; y: number };
+  time: number;
+  playerTime1: number;
+  playerTime2: number;
+  startedAt: number;
+  lastMoveTime: number;
+  maxMoveTime: number;
+  gameSession: {
+    id: string;
+    creatorId: string;
+    opponentId: string;
+    lobbyId: string;
+  };
+}
+
 @Injectable()
 export class GameService {
   private activeSessions = new Map<string, GameSession>();
@@ -357,23 +378,24 @@ export class GameService {
   async createGameSession(lobbyId: string, data: {
     creatorId: string;
     opponentId: string;
-    creatorMarker: string;
-    opponentMarker: string;
+    creatorMarker: '⭕' | '❌';
+    opponentMarker: '⭕' | '❌';
     startTime: number;
   }): Promise<GameSession> {
     const gameSession: GameSession = {
-      id: `game_${lobbyId.replace('lobby_', '')}`,
-      lobbyId,
+      id: lobbyId,
       creatorId: data.creatorId,
       opponentId: data.opponentId,
-      creatorMarker: data.creatorMarker,
-      opponentMarker: data.opponentMarker,
-      startTime: data.startTime,
-      board: {},
+      creatorMarker: data.creatorMarker as '⭕' | '❌',
+      opponentMarker: data.opponentMarker as '⭕' | '❌',
       currentTurn: data.creatorId,
-      lastMoveTime: data.startTime,
+      board: Array(10000).fill(null),
+      numMoves: 0,
+      pay: false,
+      startedAt: Date.now(),
       playerTime1: 0,
-      playerTime2: 0
+      playerTime2: 0,
+      lastMoveTime: Date.now()
     };
 
     await this.redis.set(`game:${gameSession.id}`, JSON.stringify(gameSession));
@@ -663,7 +685,7 @@ export class GameService {
       time: 0,
       playerTime1: gameSession.playerTime1,
       playerTime2: gameSession.playerTime2,
-      startTime: gameSession.startTime,
+      startedAt: gameSession.startedAt,
       lastMoveTime: gameSession.lastMoveTime,
       maxMoveTime: MAX_MOVE_TIME,
       gameSession: {

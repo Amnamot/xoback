@@ -616,7 +616,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Определяем роль игрока
     const isCreator = lobby.creatorId === data.telegramId;
     const role = isCreator ? 'creator' : 'opponent';
-    const marker = isCreator ? 'X' : 'O';
+    const marker = isCreator ? '❌' : '⭕';
 
     // Обновляем данные лобби
     await this.gameService.updateLobby(data.lobbyId, {
@@ -632,8 +632,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const gameSession = await this.gameService.createGameSession(data.lobbyId, {
       creatorId: lobby.creatorId,
       opponentId: data.telegramId,
-      creatorMarker: 'X',
-      opponentMarker: 'O',
+      creatorMarker: '❌',
+      opponentMarker: '⭕',
       startTime: Date.now()
     });
 
