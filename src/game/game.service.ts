@@ -1,3 +1,4 @@
+// src/game/game.service.ts v1.0.3
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
@@ -378,8 +379,8 @@ export class GameService {
   async createGameSession(lobbyId: string, data: {
     creatorId: string;
     opponentId: string;
-    creatorMarker: '⭕' | '❌';
-    opponentMarker: '⭕' | '❌';
+    creatorMarker: 'o' | 'x';
+    opponentMarker: 'o' | 'x';
     startTime: number;
   }): Promise<GameSession> {
     console.log('🎮 [CreateGameSession] Starting game session creation:', {
@@ -396,8 +397,8 @@ export class GameService {
       id: lobbyId,
       creatorId: data.creatorId,
       opponentId: data.opponentId,
-      creatorMarker: data.creatorMarker as '⭕' | '❌',
-      opponentMarker: data.opponentMarker as '⭕' | '❌',
+      creatorMarker: data.creatorMarker as 'o' | 'x',
+      opponentMarker: data.opponentMarker as 'o' | 'x',
       currentTurn: data.creatorMarker,
       board: Array(10000).fill(null),
       numMoves: 0,

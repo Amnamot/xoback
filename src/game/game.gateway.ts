@@ -1,4 +1,4 @@
-// src/game/game.gateway.ts v1.0.2
+// src/game/game.gateway.ts v1.0.4
 import { 
   WebSocketGateway, 
   WebSocketServer, 
@@ -39,7 +39,7 @@ interface PlayerData {
   lobbyId?: string;
   gameId?: string;
   role: 'creator' | 'opponent';
-  marker: '⭕' | '❌';
+  marker: 'o' | 'x';
   newUser?: boolean;         // Флаг нового пользователя
   inviteSent?: boolean;      // Флаг отправленного приглашения
   lastAction?: string;       // Последнее действие игрока
@@ -64,7 +64,7 @@ interface GameData {
 interface PlayerState {
   roomId: string;  // ID комнаты (лобби или игры)
   role: 'creator' | 'opponent';
-  marker: '⭕' | '❌';
+  marker: 'o' | 'x';
 }
 
 @Injectable()
@@ -203,7 +203,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.saveToRedis(`player:${data.user.id}`, {
           lobbyId: data.start_param,
           role: 'opponent',
-          marker: '⭕',
+          marker: 'o',
           newUser: isNewUser,
           name: data.user.first_name,
           avatar: data.user.photo_url
@@ -357,8 +357,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const gameSession = await this.gameService.createGameSession(lobby.id, {
         creatorId: data.telegramId,
         opponentId: '', // Пустой ID оппонента, так как он еще не подключился
-        creatorMarker: '❌',
-        opponentMarker: '⭕',
+        creatorMarker: 'x',
+        opponentMarker: 'o',
         startTime: Date.now()
       });
 
@@ -379,7 +379,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       await this.saveToRedis(`player:${data.telegramId}`, {
         lobbyId: lobby.id,
         role: 'creator',
-        marker: '❌',
+        marker: 'x',
         newUser: isNewUser
       });
       
@@ -388,7 +388,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.playerStates.set(data.telegramId, {
         roomId: roomId,
         role: 'creator',
-        marker: '❌'
+        marker: 'x'
       });
       
       // Добавляем клиента в комнату
@@ -400,7 +400,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         roomId: roomId,
         timestamp: Date.now(),
-        creatorMarker: '❌'
+        creatorMarker: 'x'
       });
       
       return { 
@@ -443,7 +443,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Определяем роль игрока
       const role = lobbyData.creatorId === data.telegramId ? 'creator' : 'opponent';
-      const marker = role === 'creator' ? '❌' : '⭕';
+      const marker = role === 'creator' ? 'x' : 'o';
 
       // Обновляем данные лобби
       await this.saveToRedis(`lobby:${data.lobbyId}`, {
@@ -475,8 +475,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         startTime: lobbyData.startTime,
         creatorId: lobbyData.creatorId,
         opponentId: data.telegramId,
-        creatorMarker: '❌',
-        opponentMarker: '⭕'
+        creatorMarker: 'x',
+        opponentMarker: 'o'
       });
 
       // Отправляем текущее состояние игры
@@ -558,7 +558,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Обновляем состояние игры
     const newBoard = [...gameData.board];
-    newBoard[Number(data.position)] = data.player === String(gameData.creatorId) ? '❌' : '⭕';
+    newBoard[Number(data.position)] = data.player === String(gameData.creatorId) ? 'x' : 'o';
 
     const updatedGameData = {
       ...gameData,
@@ -817,14 +817,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         ...existingPlayerData,
         lobbyId: lobby.id,
         role: 'creator',
-        marker: '❌',
+        marker: 'x',
         newUser: isNewUser
       });
       console.log('[DEBUG][PLAYER SAVE]', {
         telegramId: data.telegramId,
         lobbyId: lobby.id,
         role: 'creator',
-        marker: '❌',
+        marker: 'x',
         source: 'handleCreateInvite',
         timestamp: new Date().toISOString()
       });
@@ -860,7 +860,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         creatorId: data.telegramId,
         lobbyStatus: lobby.status,
-        creatorMarker: '❌',
+        creatorMarker: 'x',
         redisKeys: {
           player: `player:${data.telegramId}`,
           lobby: `lobby:${lobby.id}`
@@ -1356,7 +1356,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       state: 'waiting',
       gameData: {
         board: Array(10000).fill(null),
-        currentTurn: 'X',
+        currentTurn: 'x',
         playerTime1: 0,
         playerTime2: 0,
         startTime: Date.now(),

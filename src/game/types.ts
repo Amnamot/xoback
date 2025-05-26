@@ -1,3 +1,4 @@
+// src/game/types.ts v1.0.3 
 // Структура лобби (временное состояние ожидания)
 export interface Lobby {
   id: string;           // ID лобби
@@ -15,8 +16,8 @@ export interface GameSession {
   // Игроки
   creatorId: string;            // telegramId создателя (createdBy в БД)
   opponentId: string;           // telegramId соперника (rival в БД)
-  creatorMarker: '⭕' | '❌';   // маркер создателя
-  opponentMarker: '⭕' | '❌';  // маркер соперника
+  creatorMarker: 'o' | 'x';   // маркер создателя
+  opponentMarker: 'o' | 'x';  // маркер соперника
   
   // Состояние игры
   currentTurn: string;          // чей сейчас ход
