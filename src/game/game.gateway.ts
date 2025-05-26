@@ -767,7 +767,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           lobbyId: data.lobbyId,
           role: mergedOpponentData.role,
           marker: mergedOpponentData.marker,
-          source: 'handleJoinLobby',
+          source: 'handleJoinLobby/opponent',
           timestamp: new Date().toISOString()
         });
 
@@ -1091,7 +1091,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Получаем лобби из GameService
-      let lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      const lobby = await this.gameService.findLobbyByCreator(data.telegramId);
       
       if (!lobby) {
         console.log('❌ [Invite] No matching lobby found for telegramId:', {
@@ -1103,30 +1103,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             players: redisState[2]
           }
         });
-
-        // Пробуем создать новое лобби, если не найдено
-        console.log('🔄 [Invite] Attempting to create new lobby for creator:', {
-          telegramId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-
-        const newLobby = await this.gameService.createLobby(data.telegramId);
-        if (!newLobby) {
-          console.error('❌ [Invite] Failed to create new lobby:', {
-            telegramId: data.telegramId,
-            timestamp: new Date().toISOString()
-          });
-          return { error: 'Failed to create lobby' };
-        }
-
-        console.log('✅ [Invite] Created new lobby:', {
-          lobbyId: newLobby.id,
-          creatorId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-
-        // Используем новое лобби
-        lobby = newLobby;
+        return { error: 'Lobby not found' };
       }
 
       console.log('✅ [Invite] Found lobby:', {
