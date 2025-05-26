@@ -639,7 +639,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Отправляем события
     this.server.to(gameRoom).emit('gameStart', {
-      startTime: gameSession.startTime,
+      startTime: gameSession.startedAt,
       creatorId: gameSession.creatorId,
       opponentId: gameSession.opponentId,
       creatorMarker: gameSession.creatorMarker,
@@ -1507,7 +1507,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       time: 0,
       playerTime1: gameSession.playerTime1,
       playerTime2: gameSession.playerTime2,
-      startTime: gameSession.startedAt,
+      startedAt: gameSession.startedAt,
       lastMoveTime: gameSession.lastMoveTime,
       maxMoveTime: MAX_MOVE_TIME,
       gameSession: {

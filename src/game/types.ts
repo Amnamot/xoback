@@ -2,6 +2,7 @@
 export interface Lobby {
   id: string;           // ID лобби
   creatorId: string;    // telegramId создателя
+  opponentId?: string;  // telegramId оппонента (если присоединился)
   createdAt: number;    // время создания
   status: 'active' | 'pending' | 'closed';  // статус лобби
 }
@@ -14,6 +15,8 @@ export interface GameSession {
   // Игроки
   creatorId: string;            // telegramId создателя (createdBy в БД)
   opponentId: string;           // telegramId соперника (rival в БД)
+  creatorMarker: '⭕' | '❌';   // маркер создателя
+  opponentMarker: '⭕' | '❌';  // маркер соперника
   
   // Состояние игры
   currentTurn: string;          // чей сейчас ход
