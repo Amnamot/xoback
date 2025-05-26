@@ -602,17 +602,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { status: 'error', message: 'Lobby is not active' };
     }
 
-    // Проверяем существование игровой комнаты
-    const gameRoom = data.lobbyId;
-    const roomExists = await this.redis.exists(gameRoom);
-    if (!roomExists) {
-      console.error('❌ [JoinLobby] Game room not found:', {
-        gameRoom,
-        timestamp: new Date().toISOString()
-      });
-      return { status: 'error', message: 'Game room not found' };
-    }
-
     // Определяем роль игрока
     const isCreator = lobby.creatorId === data.telegramId;
     const role = isCreator ? 'creator' : 'opponent';
@@ -626,7 +615,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     // Присоединяем к игровой комнате
-    await client.join(gameRoom);
+    await client.join(data.lobbyId);
 
     // Создаем игровую сессию
     const gameSession = await this.gameService.createGameSession(data.lobbyId, {
@@ -638,7 +627,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     // Отправляем события
-    this.server.to(gameRoom).emit('gameStart', {
+    this.server.to(data.lobbyId).emit('gameStart', {
       startTime: gameSession.startedAt,
       creatorId: gameSession.creatorId,
       opponentId: gameSession.opponentId,
@@ -648,7 +637,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Отправляем текущее состояние игры
     const gameState = await this.gameService.getGameState(data.lobbyId);
-    this.server.to(gameRoom).emit('gameState', gameState);
+    this.server.to(data.lobbyId).emit('gameState', gameState);
 
     return { status: 'success', role, marker };
   }
