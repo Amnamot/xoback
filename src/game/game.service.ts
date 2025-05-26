@@ -448,13 +448,28 @@ export class GameService {
   }
 
   async updateGameSession(gameId: string, updates: Partial<GameSession>): Promise<GameSession> {
-    const session = this.activeSessions.get(gameId);
+    // Проверяем в памяти
+    let session = this.activeSessions.get(gameId);
+    
+    // Если нет в памяти, проверяем в Redis
+    if (!session) {
+      const redisSession = await this.redis.get(`lobby:${gameId}`);
+      if (redisSession) {
+        session = JSON.parse(redisSession) as GameSession;
+        this.activeSessions.set(gameId, session);
+      }
+    }
+
     if (!session) {
       throw new Error('Game session not found');
     }
 
     Object.assign(session, updates);
     this.activeSessions.set(gameId, session);
+    
+    // Обновляем в Redis
+    await this.redis.set(`lobby:${gameId}`, JSON.stringify(session), 'EX', 180);
+    
     return session;
   }
 
