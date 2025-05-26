@@ -712,7 +712,23 @@ export class GameService {
     if (!lobby) {
       throw new Error(`Lobby ${lobbyId} not found`);
     }
-    await this.redis.set(`lobby:${lobbyId}`, JSON.stringify({ ...lobby, ...data }));
+
+    const updatedLobby = { ...lobby, ...data };
+    
+    // Обновляем в памяти
+    this.activeLobbies.set(lobbyId, updatedLobby);
+    
+    // Обновляем в Redis
+    const multi = this.redis.multi();
+    multi.set(lobbyId, JSON.stringify(updatedLobby), 'EX', 180);
+    if (updatedLobby.creatorId) {
+      multi.set(`user_lobby:${updatedLobby.creatorId}`, lobbyId, 'EX', 180);
+    }
+    
+    const results = await multi.exec();
+    if (!results || results.some(result => !result[1])) {
+      throw new Error('Failed to update lobby in Redis');
+    }
   }
 
   async getGameState(lobbyId: string): Promise<GameState> {
