@@ -141,62 +141,84 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      const data = await this.initDataService.parseInitData(client.handshake.query.initData as string);
-      if (!data) {
-        console.error('❌ [Connection] Invalid initData:', {
-          socketId: client.id,
-          timestamp: new Date().toISOString()
-        });
+      const initData = client.handshake.query.initData as string;
+      const data = this.initDataService.parseInitData(initData);
+      
+      console.log('🔌 [Connection] New connection:', {
+        telegramId: data.user?.id,
+        socketId: client.id,
+        startParam: data.start_param,
+        timestamp: new Date().toISOString()
+      });
+
+      if (!data.user?.id) {
+        console.error('❌ [Connection] No telegramId in initData');
         client.disconnect();
         return;
       }
 
-      console.log('🔌 [Connection] New client connection attempt:', {
-        telegramId: data.telegramId,
+      // Сохраняем связь socketId -> telegramId
+      this.connectedClients.set(data.user.id, client);
+      console.log('✅ [Connection] Client registered:', {
+        telegramId: data.user.id,
         socketId: client.id,
-        timestamp: new Date().toISOString(),
-        connectionType: client.conn.transport.name,
-        query: client.handshake.query,
-        existingSocket: this.connectedClients.has(data.telegramId)
+        timestamp: new Date().toISOString()
       });
 
-      // Сохраняем сокет
-      this.connectedClients.set(data.telegramId, client);
-
-      // Получаем данные игрока
-      const playerData = await this.getFromRedis(`player:${data.telegramId}`);
-      if (!playerData) {
-        console.log('👤 [Connection] New player connected:', {
-          telegramId: data.telegramId,
-          socketId: client.id,
+      // Проверяем наличие start_param
+      if (data.start_param) {
+        console.log('🎯 [Connection] Processing start_param:', {
+          startParam: data.start_param,
+          telegramId: data.user.id,
           timestamp: new Date().toISOString()
         });
-        return;
-      }
 
-      // Проверяем наличие активной игры
-      if (playerData.gameId) {
-        const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
-        if (gameData) {
-          // Подключаем к комнате игры
-          client.join(playerData.gameId);
-          this.clientGames.set(data.telegramId, playerData.gameId);
-
-          // Отправляем текущее состояние игры
-          this.sendGameStateToSocket(client, gameData, playerData.gameId);
+        // Проверяем существование лобби
+        const lobbyData = await this.getFromRedis(`lobby:${data.start_param}`);
+        if (!lobbyData) {
+          console.error('❌ [Connection] Lobby not found:', {
+            lobbyId: data.start_param,
+            timestamp: new Date().toISOString()
+          });
+          client.disconnect();
+          return;
         }
+
+        // Проверяем статус лобби
+        if (lobbyData.status !== 'active') {
+          console.error('❌ [Connection] Lobby is not active:', {
+            lobbyId: data.start_param,
+            status: lobbyData.status,
+            timestamp: new Date().toISOString()
+          });
+          client.disconnect();
+          return;
+        }
+
+        // Присоединяем к лобби
+        await this.handleJoinLobby(client, {
+          telegramId: data.user.id,
+          lobbyId: data.start_param
+        });
+
+        console.log('✅ [Connection] Joined lobby via start_param:', {
+          lobbyId: data.start_param,
+          telegramId: data.user.id,
+          timestamp: new Date().toISOString()
+        });
       }
 
       // Проверяем наличие активного лобби
-      if (playerData.lobbyId) {
+      const playerData = await this.getFromRedis(`player:${data.user.id}`);
+      if (playerData?.lobbyId) {
         const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
         if (lobbyData) {
           // Подключаем к комнате лобби
           client.join(playerData.lobbyId);
-          this.clientLobbies.set(data.telegramId, playerData.lobbyId);
+          this.clientLobbies.set(data.user.id, playerData.lobbyId);
 
           // Обновляем TTL для всех ключей
-          await this.updateTTL(`player:${data.telegramId}`);
+          await this.updateTTL(`player:${data.user.id}`);
           await this.updateTTL(`lobby:${playerData.lobbyId}`);
         }
       }
