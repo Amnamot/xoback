@@ -398,7 +398,7 @@ export class GameService {
       opponentId: data.opponentId,
       creatorMarker: data.creatorMarker as '⭕' | '❌',
       opponentMarker: data.opponentMarker as '⭕' | '❌',
-      currentTurn: data.creatorId,
+      currentTurn: data.creatorMarker,
       board: Array(10000).fill(null),
       numMoves: 0,
       pay: false,
