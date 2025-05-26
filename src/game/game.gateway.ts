@@ -443,12 +443,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
-      // Проверяем, не заполнено ли лобби
-      if (lobby.status === 'active') {
-        console.warn('⚠️ Lobby is already active:', data.lobbyId);
+      // Проверяем, не закрыто ли лобби
+      if (lobby.status === 'closed') {
+        console.warn('⚠️ Lobby is closed:', data.lobbyId);
         return { 
           status: 'error',
-          message: 'Lobby is already active',
+          message: 'Lobby is closed',
           timestamp: Date.now()
         };
       }
@@ -465,7 +465,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Обновляем лобби через GameService
       await this.gameService.updateLobby(data.lobbyId, {
         opponentId: data.telegramId,
-        status: 'active'
+        status: 'closed'
       });
 
       // Проверяем, что лобби было обновлено
