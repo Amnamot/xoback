@@ -354,32 +354,29 @@ export class GameService {
   }
 
   // Методы для работы с игровыми сессиями
-  async createGameSession(lobbyId: string, creatorId: string, opponentId: string, pay: boolean = false): Promise<GameSession> {
-    const now = Date.now();
+  async createGameSession(lobbyId: string, data: {
+    creatorId: string;
+    opponentId: string;
+    creatorMarker: string;
+    opponentMarker: string;
+    startTime: number;
+  }): Promise<GameSession> {
     const gameSession: GameSession = {
-      id: lobbyId,
-      creatorId,
-      opponentId,
-      currentTurn: 'X',
-      board: Array(100).fill(null).map(() => Array(100).fill(null)),
-      numMoves: 0,
-      pay,
-      startedAt: now,
+      id: `game_${lobbyId.replace('lobby_', '')}`,
+      lobbyId,
+      creatorId: data.creatorId,
+      opponentId: data.opponentId,
+      creatorMarker: data.creatorMarker,
+      opponentMarker: data.opponentMarker,
+      startTime: data.startTime,
+      board: {},
+      currentTurn: data.creatorId,
+      lastMoveTime: data.startTime,
       playerTime1: 0,
-      playerTime2: 0,
-      lastMoveTime: now
+      playerTime2: 0
     };
 
-    this.activeSessions.set(lobbyId, gameSession);
-    await this.saveToRedis(`game:${lobbyId}`, gameSession);
-
-    console.log('🎮 [GameService] Created new game session:', {
-      gameId: lobbyId,
-      creatorId: gameSession.creatorId,
-      opponentId,
-      startedAt: new Date(now).toISOString()
-    });
-
+    await this.redis.set(`game:${gameSession.id}`, JSON.stringify(gameSession));
     return gameSession;
   }
 
@@ -642,5 +639,39 @@ export class GameService {
         timestamp: new Date().toISOString()
       });
     }
+  }
+
+  async updateLobby(lobbyId: string, data: Partial<Lobby>): Promise<void> {
+    const lobby = await this.getLobby(lobbyId);
+    if (!lobby) {
+      throw new Error(`Lobby ${lobbyId} not found`);
+    }
+    await this.redis.set(`lobby:${lobbyId}`, JSON.stringify({ ...lobby, ...data }));
+  }
+
+  async getGameState(lobbyId: string): Promise<GameState> {
+    const gameSession = await this.getGameSession(lobbyId);
+    if (!gameSession) {
+      throw new Error(`Game session not found for lobby ${lobbyId}`);
+    }
+
+    return {
+      board: gameSession.board,
+      currentPlayer: gameSession.currentTurn,
+      scale: 1,
+      position: { x: 0, y: 0 },
+      time: 0,
+      playerTime1: gameSession.playerTime1,
+      playerTime2: gameSession.playerTime2,
+      startTime: gameSession.startTime,
+      lastMoveTime: gameSession.lastMoveTime,
+      maxMoveTime: MAX_MOVE_TIME,
+      gameSession: {
+        id: gameSession.id,
+        creatorId: gameSession.creatorId,
+        opponentId: gameSession.opponentId,
+        lobbyId
+      }
+    };
   }
 } 

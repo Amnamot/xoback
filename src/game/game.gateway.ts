@@ -142,7 +142,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnection(client: Socket) {
     const telegramId = client.handshake.query.telegramId as string;
     try {
-      const startParam = client.handshake.query.start_param as string;
+      // Получаем initData
+      const initData = client.handshake.query.initData as string;
       
       console.log('🔌 [Connection] New client connection attempt:', {
         telegramId,
@@ -159,8 +160,38 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
+      // Получаем start_param из initData
+      const { start_param } = this.initDataService.parseInitData(initData);
+      
+      if (start_param) {
+        console.log('🎯 [Connection] Processing invited player:', {
+          telegramId,
+          start_param,
+          timestamp: new Date().toISOString()
+        });
+
+        // Автоматически присоединяем к лобби
+        const joinResult = await this.handleJoinLobby(client, {
+          telegramId,
+          lobbyId: start_param
+        });
+
+        if (joinResult && joinResult.status === 'error') {
+          console.error('❌ [Connection] Failed to join lobby:', {
+            error: joinResult.message,
+            telegramId,
+            start_param,
+            timestamp: new Date().toISOString()
+          });
+          client.disconnect();
+          return;
+        }
+      }
+
+      // Сохраняем сокет
+      this.connectedClients.set(telegramId, client);
+      
       // Сохраняем данные пользователя из initData
-      const initData = client.handshake.query.initData as string;
       if (initData) {
         const { user } = this.initDataService.parseInitData(initData);
         if (user) {
@@ -197,35 +228,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             savedData,
             timestamp: new Date().toISOString()
           });
-        }
-      }
-
-      // Если есть start_param и он не undefined, значит это приглашенный игрок
-      if (startParam && startParam !== 'undefined') {
-        console.log('🧹 [Connection] Processing invited player:', {
-          telegramId,
-          startParam,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Удаляем только lobby:${telegramId}, НЕ удаляем player:${telegramId}
-        await this.redis.del(`lobby:${telegramId}`);
-        
-        // Автоматически присоединяем к лобби
-        const joinResult = await this.handleJoinLobby(client, {
-          telegramId,
-          lobbyId: startParam
-        });
-        
-        if (joinResult && joinResult.status === 'error') {
-          console.error('❌ [Connection] Failed to join lobby:', {
-            error: joinResult.message,
-            telegramId,
-            startParam,
-            timestamp: new Date().toISOString()
-          });
-          client.disconnect();
-          return;
         }
       }
 
@@ -350,14 +352,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
     } catch (error) {
-      console.error('❌ [Connection] Error handling connection:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        telegramId: client.handshake.query.telegramId,
-        timestamp: new Date().toISOString()
-      });
+      console.error('❌ [Connection] Error:', error);
+      client.disconnect();
     }
-
-    this.connectedClients.set(telegramId, client);
   }
 
   async handleDisconnect(client: Socket) {
@@ -566,343 +563,81 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: JoinLobbyDto
   ) {
-    console.log('🔍 [JoinLobby] Attempting to join lobby:', {
-      lobbyId: data.lobbyId,
+    console.log('🎮 [JoinLobby] Attempt to join lobby:', {
       telegramId: data.telegramId,
+      lobbyId: data.lobbyId,
       timestamp: new Date().toISOString()
     });
 
-    const roomId = data.lobbyId.replace(/^lobby/, 'room');
-    console.log('🎯 [JoinLobby] Target room:', {
-      lobbyId: data.lobbyId,
-      roomId,
-      telegramId: data.telegramId,
-      timestamp: new Date().toISOString()
-    });
-
-    try {
-      // Получаем данные лобби
-      const lobby = await this.gameService.getLobby(data.lobbyId);
-      
-      if (!lobby) {
-        console.warn('⚠️ [JoinLobby] Lobby not found:', {
-          lobbyId: data.lobbyId,
-          telegramId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return {
-          status: 'error',
-          message: 'Lobby not found'
-        };
-      }
-
-      // Если есть start_param и он не undefined, проверяем соответствие лобби
-      const startParam = client.handshake.query.start_param as string;
-      if (startParam && startParam !== 'undefined' && startParam !== data.lobbyId) {
-        console.warn('⚠️ [JoinLobby] Lobby ID mismatch:', {
-          requestedLobbyId: data.lobbyId,
-          startParamLobbyId: startParam,
-          telegramId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-        return {
-          status: 'error',
-          message: 'Invalid lobby ID'
-        };
-      }
-
-      // Обновляем TTL для лобби
-      await this.updateTTL(`lobby:${data.lobbyId}`);
-
-      // Получаем данные лобби
-      const currentLobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
-      if (currentLobbyData) {
-        console.log('🔌 [Socket] Using original socketId from lobby:', {
-          lobbyId: data.lobbyId,
-          originalSocketId: currentLobbyData.socketId,
-          currentSocketId: client.id,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Определяем роль игрока
-      const isCreator = String(lobby.creatorId) === String(data.telegramId);
-      const isInvited = Boolean(startParam);
-
-      console.log('👥 [Join] Role determination:', {
-        telegramId: data.telegramId,
-        isCreator,
-        isInvited,
-        startParam,
+    // Проверяем существование лобби
+    const lobby = await this.gameService.getLobby(data.lobbyId);
+    if (!lobby) {
+      console.error('❌ [JoinLobby] Lobby not found:', {
         lobbyId: data.lobbyId,
         timestamp: new Date().toISOString()
       });
-
-      if (isCreator) {
-        // Обновляем TTL для создателя
-        await this.updateTTL(`player:${data.telegramId}`);
-
-        const creatorSocket = this.connectedClients.get(data.telegramId);
-        console.log('🎮 [Creator Join] Creator joining attempt:', {
-          lobbyId: lobby.id,
-          creatorId: data.telegramId,
-          socketState: {
-            connected: creatorSocket?.connected || false,
-            rooms: Array.from(creatorSocket?.rooms || []),
-            handshake: creatorSocket?.handshake?.query || {},
-            transport: creatorSocket?.conn?.transport?.name || 'unknown'
-          },
-          mappings: {
-            inClientGames: this.clientGames.has(data.telegramId),
-            inClientLobbies: this.clientLobbies.has(data.telegramId),
-            inConnectedClients: this.connectedClients.has(data.telegramId)
-          },
-          timestamp: new Date().toISOString()
-        });
-
-        // Проверяем существующую игровую сессию в Redis
-        const roomIdJoin = data.lobbyId.replace(/^lobby/, 'room');
-        const gameDataJoin = await this.getFromRedis(`game:${roomIdJoin}`);
-        
-        console.log('🎲 [Creator Join] Game session check:', {
-          lobbyId: data.lobbyId,
-          hasGameData: Boolean(gameDataJoin),
-          gameState: gameDataJoin ? {
-            board: gameDataJoin.board,
-            currentTurn: gameDataJoin.currentTurn,
-            lastMoveTime: gameDataJoin.lastMoveTime
-          } : null,
-          timestamp: new Date().toISOString()
-        });
-
-        if (gameDataJoin || lobby.status === 'closed') {
-          console.log('🎮 [Creator Join] Found active game session:', {
-            lobbyId: data.lobbyId,
-            gameData: gameDataJoin,
-            lobbyStatus: lobby.status,
-            timestamp: new Date().toISOString()
-          });
-
-          // Подключаем создателя к игровой комнате
-          const roomId = data.lobbyId.replace(/^lobby/, 'room');
-          client.join(roomId);
-          this.clientGames.set(data.telegramId, roomId);
-          this.clientLobbies.delete(data.telegramId);
-
-          // Обновляем TTL для игры
-          await this.updateTTL(`game:${roomId}`);
-
-          // Отправляем текущее состояние игры
-          this.sendGameStateToSocket(client, gameDataJoin, data.lobbyId);
-
-          console.log('✅ [Creator Join] Successfully joined game:', {
-            lobbyId: data.lobbyId,
-            creatorId: data.telegramId,
-            gameState: {
-              board: gameDataJoin.board,
-              currentTurn: gameDataJoin.currentTurn,
-              lastMoveTime: gameDataJoin.lastMoveTime
-            },
-            timestamp: new Date().toISOString()
-          });
-
-          return { status: 'creator_game_joined' };
-        }
-
-        // Если игровой сессии нет, подключаем к лобби
-        const roomId = data.lobbyId.replace(/^lobby/, 'room');
-        client.join(roomId);
-        this.clientLobbies.set(data.telegramId, data.lobbyId);
-
-        return { status: 'creator_lobby_joined' };
-      }
-
-      // Логика для присоединения оппонента
-      const lobbyData = await this.getFromRedis(`lobby:${data.lobbyId}`);
-      
-      console.log('👥 [Opponent Join] Processing join request:', {
-        lobbyId: data.lobbyId,
-        opponentId: data.telegramId,
-        lobbyData,
-        timestamp: new Date().toISOString()
-      });
-
-      if (lobbyData && lobbyData.status !== 'active') {
-        console.log('⚠️ [Opponent Join] Lobby not available:', {
-          lobbyId: data.lobbyId,
-          opponentId: data.telegramId,
-          lobbyStatus: lobbyData.status,
-          timestamp: new Date().toISOString()
-        });
-        return {
-          status: 'error',
-          errorType: 'unavailable',
-          message: 'This game is not available for joining'
-        };
-      }
-
-      // Если это приглашенный игрок, устанавливаем роль opponent
-      if (isInvited && !isCreator) {
-        // Сохраняем данные оппонента в Redis
-        const existingOpponentData = await this.getFromRedis(`player:${data.telegramId}`);
-        console.log('🔍 [JoinLobby] Existing opponent data:', {
-          telegramId: data.telegramId,
-          existingData: existingOpponentData,
-          timestamp: new Date().toISOString()
-        });
-
-        // Корректный merge: не затираем name/avatar, если они не переданы
-        const mergedOpponentData = {
-          ...existingOpponentData,
-          lobbyId: data.lobbyId,
-          role: 'opponent',
-          marker: '⭕'
-        };
-        if (data.name !== undefined) mergedOpponentData.name = data.name;
-        if (data.avatar !== undefined) mergedOpponentData.avatar = data.avatar;
-
-        await this.saveToRedis(`player:${data.telegramId}`, mergedOpponentData);
-        console.log('[DEBUG][PLAYER SAVE]', {
-          telegramId: data.telegramId,
-          lobbyId: data.lobbyId,
-          role: mergedOpponentData.role,
-          marker: mergedOpponentData.marker,
-          source: 'handleJoinLobby',
-          timestamp: new Date().toISOString()
-        });
-
-        // Обновляем данные лобби
-        const updatedLobbyData = {
-          ...lobby,
-          opponentId: data.telegramId,
-          status: 'closed'
-        };
-        console.log('[DEBUG][LOBBY STATUS] Меняем статус лобби на closed:', {
-          lobbyId: data.lobbyId,
-          prevStatus: lobby.status,
-          newStatus: 'closed',
-          updatedLobbyData,
-          calledFrom: 'handleJoinLobby/opponent',
-          telegramId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-        await this.saveToRedis(`lobby:${data.lobbyId}`, updatedLobbyData);
-
-        console.log('📝 [Opponent Join] Updated lobby data:', {
-          lobbyId: data.lobbyId,
-          previousState: lobbyData,
-          newState: updatedLobbyData,
-          timestamp: new Date().toISOString()
-        });
-
-        // Формируем roomId на основе lobbyId
-        const roomId = data.lobbyId.replace(/^lobby/, 'room');
-
-        // Создаем игровую сессию
-        const gameSession = await this.gameService.createGameSession(
-          roomId,
-          lobby.creatorId,
-          data.telegramId,
-          false
-        );
-
-        // Обновляем состояние игрока
-        this.playerStates.set(data.telegramId, {
-          roomId: roomId,
-          role: 'opponent',
-          marker: '⭕'
-        });
-
-        // Присоединяем игроков к игровой комнате
-        client.join(roomId);
-        console.log('👥 [JoinLobby] Invited player joined room:', {
-          roomId: roomId,
-          telegramId: data.telegramId,
-          timestamp: new Date().toISOString()
-        });
-        
-        const creatorSocket = this.connectedClients.get(lobby.creatorId);
-        if (creatorSocket) {
-          creatorSocket.join(roomId);
-          // Обновляем состояние создателя
-          this.playerStates.set(lobby.creatorId, {
-            roomId: roomId,
-            role: 'creator',
-            marker: '❌'
-          });
-
-          // Отправляем состояние игры создателю
-          this.sendGameStateToSocket(creatorSocket, gameSession, data.lobbyId);
-        }
-
-        // Отправляем события начала игры
-        this.server.to(roomId).emit('gameStart', {
-          gameId: gameSession.id,
-          startTime: gameSession.startedAt
-        });
-
-        this.server.to(roomId).emit('gameState', {
-          board: gameSession.board,
-          currentPlayer: gameSession.currentTurn,
-          scale: 1,
-          position: { x: 0, y: 0 },
-          time: 0,
-          playerTime1: gameSession.playerTime1,
-          playerTime2: gameSession.playerTime2,
-          startTime: gameSession.startedAt,
-          lastMoveTime: gameSession.lastMoveTime,
-          maxMoveTime: MAX_MOVE_TIME,
-          gameSession: {
-            id: gameSession.id,
-            creatorId: gameSession.creatorId,
-            opponentId: gameSession.opponentId,
-            lobbyId: data.lobbyId
-          }
-        });
-
-        console.log('👥 Players joined game room:', {
-          roomId: roomId,
-          creatorId: lobby.creatorId,
-          opponentId: data.telegramId,
-          states: {
-            creator: this.playerStates.get(lobby.creatorId),
-            opponent: this.playerStates.get(data.telegramId)
-          },
-          timestamp: new Date().toISOString()
-        });
-
-        return { 
-          status: 'joined',
-          gameData: gameSession,
-          session: gameSession
-        };
-      }
-    } catch (error) {
-      console.error('❌ [JoinLobby] Error in handleJoinLobby:', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        telegramId: data.telegramId,
-        timestamp: new Date().toISOString()
-      });
-      
-      // Очищаем связи при ошибке
-      this.clientLobbies.delete(data.telegramId);
-      this.clientGames.delete(data.telegramId);
-      
-      console.log('🧹 [JoinLobby] Cleaned up client associations for:', {
-        telegramId: data.telegramId,
-        mappings: {
-          inClientGames: this.clientGames.has(data.telegramId),
-          inClientLobbies: this.clientLobbies.has(data.telegramId)
-        },
-        timestamp: new Date().toISOString()
-      });
-      
-      return { 
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Failed to join lobby',
-        timestamp: Date.now()
-      };
+      return { status: 'error', message: 'Lobby not found' };
     }
+
+    // Проверяем статус лобби
+    if (lobby.status !== 'active') {
+      console.error('❌ [JoinLobby] Lobby is not active:', {
+        lobbyId: data.lobbyId,
+        status: lobby.status,
+        timestamp: new Date().toISOString()
+      });
+      return { status: 'error', message: 'Lobby is not active' };
+    }
+
+    // Проверяем существование игровой комнаты
+    const gameRoom = `room_${data.lobbyId.replace('lobby_', '')}`;
+    const roomExists = await this.redis.exists(gameRoom);
+    if (!roomExists) {
+      console.error('❌ [JoinLobby] Game room not found:', {
+        gameRoom,
+        timestamp: new Date().toISOString()
+      });
+      return { status: 'error', message: 'Game room not found' };
+    }
+
+    // Определяем роль игрока
+    const isCreator = lobby.creatorId === data.telegramId;
+    const role = isCreator ? 'creator' : 'opponent';
+    const marker = isCreator ? 'X' : 'O';
+
+    // Обновляем данные лобби
+    await this.gameService.updateLobby(data.lobbyId, {
+      ...lobby,
+      opponentId: isCreator ? lobby.opponentId : data.telegramId,
+      status: 'closed'
+    });
+
+    // Присоединяем к игровой комнате
+    await client.join(gameRoom);
+
+    // Создаем игровую сессию
+    const gameSession = await this.gameService.createGameSession(data.lobbyId, {
+      creatorId: lobby.creatorId,
+      opponentId: data.telegramId,
+      creatorMarker: 'X',
+      opponentMarker: 'O',
+      startTime: Date.now()
+    });
+
+    // Отправляем события
+    this.server.to(gameRoom).emit('gameStart', {
+      startTime: gameSession.startTime,
+      creatorId: gameSession.creatorId,
+      opponentId: gameSession.opponentId,
+      creatorMarker: gameSession.creatorMarker,
+      opponentMarker: gameSession.opponentMarker
+    });
+
+    // Отправляем текущее состояние игры
+    const gameState = await this.gameService.getGameState(data.lobbyId);
+    this.server.to(gameRoom).emit('gameState', gameState);
+
+    return { status: 'success', role, marker };
   }
 
   @SubscribeMessage('makeMove')
