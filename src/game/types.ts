@@ -15,6 +15,8 @@ export interface GameSession {
   // Игроки
   creatorId: string;            // telegramId создателя (createdBy в БД)
   opponentId: string;           // telegramId соперника (rival в БД)
+  creatorMarker: string;        // маркер создателя (❌ или ⭕)
+  opponentMarker: string;       // маркер соперника (❌ или ⭕)
   
   // Состояние игры
   currentTurn: string;          // чей сейчас ход
