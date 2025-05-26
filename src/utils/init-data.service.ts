@@ -18,7 +18,8 @@ export class InitDataService {
     const params = new URLSearchParams(decoded);
     const userRaw = params.get('user');
     const user = userRaw ? JSON.parse(userRaw) : null;
-    return { user };
+    const start_param = params.get('start_param');
+    return { user, start_param };
   }
 }
 

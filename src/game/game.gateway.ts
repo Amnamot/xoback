@@ -140,11 +140,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleConnection(client: Socket) {
-    const telegramId = client.handshake.query.telegramId as string;
     try {
       // Получаем initData
       const initData = client.handshake.query.initData as string;
       
+      if (!initData) {
+        console.error('❌ [Connection] No initData provided');
+        client.disconnect();
+        return;
+      }
+
+      // Получаем данные пользователя из initData
+      const { user, start_param } = this.initDataService.parseInitData(initData);
+      
+      if (!user) {
+        console.error('❌ [Connection] No user data in initData');
+        client.disconnect();
+        return;
+      }
+
+      const telegramId = user.id.toString();
+
       console.log('🔌 [Connection] New client connection attempt:', {
         telegramId,
         socketId: client.id,
@@ -626,7 +642,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Отправляем события
     this.server.to(gameRoom).emit('gameStart', {
-      startTime: gameSession.startedAt,
+      startTime: gameSession.startTime,
       creatorId: gameSession.creatorId,
       opponentId: gameSession.opponentId,
       creatorMarker: gameSession.creatorMarker,

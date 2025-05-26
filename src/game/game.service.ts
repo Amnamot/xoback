@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
-import { GameSession, Lobby, MAX_MOVE_TIME, GameState } from './types';
+import { GameSession, Lobby } from './types';
 
 @Injectable()
 export class GameService {
@@ -368,14 +368,12 @@ export class GameService {
       opponentId: data.opponentId,
       creatorMarker: data.creatorMarker,
       opponentMarker: data.opponentMarker,
-      startedAt: data.startTime,
+      startTime: data.startTime,
       board: {},
       currentTurn: data.creatorId,
       lastMoveTime: data.startTime,
       playerTime1: 0,
-      playerTime2: 0,
-      numMoves: 0,
-      pay: false
+      playerTime2: 0
     };
 
     await this.redis.set(`game:${gameSession.id}`, JSON.stringify(gameSession));
@@ -665,7 +663,7 @@ export class GameService {
       time: 0,
       playerTime1: gameSession.playerTime1,
       playerTime2: gameSession.playerTime2,
-      startTime: gameSession.startedAt,
+      startTime: gameSession.startTime,
       lastMoveTime: gameSession.lastMoveTime,
       maxMoveTime: MAX_MOVE_TIME,
       gameSession: {
