@@ -141,102 +141,77 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      const initData = client.handshake.query.initData as string;
-      const data = this.initDataService.parseInitData(initData);
-      
-      console.log('🔌 [Connection] New connection:', {
-        telegramId: data.user?.id,
-        socketId: client.id,
-        startParam: data.start_param,
-        timestamp: new Date().toISOString()
-      });
-
-      if (!data.user?.id) {
-        console.error('❌ [Connection] No telegramId in initData');
+      // Получаем данные пользователя из handshake
+      const initData = this.initDataService.parseInitData(client.handshake.query.initData as string);
+      if (!initData || !initData.user) {
+        console.error('❌ [Connection] Invalid init data');
         client.disconnect();
         return;
       }
 
-      // Сохраняем связь socketId -> telegramId
-      this.connectedClients.set(data.user.id, client);
+      console.log('🔌 [Connection] New connection:', {
+        telegramId: initData.user.id,
+        socketId: client.id,
+        startParam: initData.start_param,
+        timestamp: new Date().toISOString()
+      });
+
+      // Регистрируем клиента
+      this.connectedClients.set(initData.user.id, client);
       console.log('✅ [Connection] Client registered:', {
-        telegramId: data.user.id,
+        telegramId: initData.user.id,
         socketId: client.id,
         timestamp: new Date().toISOString()
       });
 
-      // Проверяем наличие start_param
-      if (data.start_param) {
+      // Если есть start_param, обрабатываем его
+      if (initData.start_param) {
         console.log('🎯 [Connection] Processing start_param:', {
-          startParam: data.start_param,
-          telegramId: data.user.id,
+          startParam: initData.start_param,
+          telegramId: initData.user.id,
           timestamp: new Date().toISOString()
         });
 
-        // Проверяем существование лобби
-        const lobbyData = await this.getFromRedis(`lobby:${data.start_param}`);
-        if (!lobbyData) {
-          console.error('❌ [Connection] Lobby not found:', {
-            lobbyId: data.start_param,
-            timestamp: new Date().toISOString()
-          });
-          client.disconnect();
-          return;
-        }
-
-        // Проверяем статус лобби
-        if (lobbyData.status !== 'active') {
-          console.error('❌ [Connection] Lobby is not active:', {
-            lobbyId: data.start_param,
-            status: lobbyData.status,
-            timestamp: new Date().toISOString()
-          });
-          client.disconnect();
-          return;
-        }
-
-        // Проверяем существование пользователя в таблице User
-        const user = await this.gameService.findUserByTelegramId(data.user.id);
-        const isNewUser = !user;
-
-        // Сохраняем данные приглашенного игрока
-        await this.saveToRedis(`player:${data.user.id}`, {
-          lobbyId: data.start_param,
+        // Сохраняем данные игрока
+        await this.saveToRedis(`player:${initData.user.id}`, {
+          lobbyId: initData.start_param,
           role: 'opponent',
           marker: 'o',
-          newUser: isNewUser,
-          name: data.user.first_name,
-          avatar: data.user.photo_url
+          newUser: false,
+          name: initData.user.first_name,
+          avatar: initData.user.photo_url
         });
 
         // Обновляем данные лобби
-        await this.saveToRedis(`lobby:${data.start_param}`, {
-          ...lobbyData,
-          opponentId: data.user.id
-        });
+        const lobbyData = await this.getFromRedis(`lobby:${initData.start_param}`);
+        if (lobbyData) {
+          await this.saveToRedis(`lobby:${initData.start_param}`, {
+            ...lobbyData,
+            opponentId: initData.user.id
+          });
+        }
 
-        // Присоединяем к лобби
-        await this.handleJoinLobby(client, {
-          telegramId: data.user.id,
-          lobbyId: data.start_param
-        });
+        // Подключаем к комнате лобби
+        const roomId = initData.start_param.replace(/^lobby/, 'room');
+        client.join(roomId);
+        this.clientLobbies.set(initData.user.id, initData.start_param);
 
         console.log('✅ [Connection] Joined lobby via start_param:', {
-          lobbyId: data.start_param,
-          telegramId: data.user.id,
+          lobbyId: initData.start_param,
+          telegramId: initData.user.id,
           timestamp: new Date().toISOString()
         });
       }
 
       // Проверяем наличие активного лобби
-      const playerData = await this.getFromRedis(`player:${data.user.id}`);
+      const playerData = await this.getFromRedis(`player:${initData.user.id}`);
       if (playerData?.lobbyId) {
         const lobbyData = await this.getFromRedis(`lobby:${playerData.lobbyId}`);
         if (lobbyData) {
           // Подключаем к комнате лобби
           const roomId = playerData.lobbyId.replace(/^lobby/, 'room');
           client.join(roomId);
-          this.clientLobbies.set(data.user.id, playerData.lobbyId);
+          this.clientLobbies.set(initData.user.id, playerData.lobbyId);
         }
       }
 
