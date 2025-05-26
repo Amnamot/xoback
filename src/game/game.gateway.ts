@@ -176,9 +176,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      // Получаем start_param из initData
-      const { start_param } = this.initDataService.parseInitData(initData);
-      
       if (start_param) {
         console.log('🎯 [Connection] Processing invited player:', {
           telegramId,
