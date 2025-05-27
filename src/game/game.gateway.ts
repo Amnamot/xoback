@@ -201,6 +201,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           telegramId: initData.user.id,
           timestamp: new Date().toISOString()
         });
+
+        // Вызываем handleJoinLobby для полной инициализации игры
+        await this.handleJoinLobby(client, {
+          lobbyId: initData.start_param,
+          telegramId: initData.user.id
+        });
       }
 
       // Проверяем наличие активного лобби
@@ -504,7 +510,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       // Отправляем событие начала игры
-      this.server.to(roomId).emit('gameStart', {
+      const gameRoomId = data.lobbyId.replace(/^lobby/, 'room');
+      this.server.to(gameRoomId).emit('gameStart', {
         gameId: data.lobbyId,
         lobbyId: data.lobbyId,
         startTime: Date.now(),
@@ -538,7 +545,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Отправляем событие о присоединении игрока
-      this.server.to(roomId).emit('playerJoined', {
+      this.server.to(gameRoomId).emit('playerJoined', {
         lobbyId: data.lobbyId,
         roomId: roomId,
         opponentId: data.telegramId,
