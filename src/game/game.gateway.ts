@@ -201,12 +201,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           telegramId: initData.user.id,
           timestamp: new Date().toISOString()
         });
-
-        // Вызываем handleJoinLobby для полной инициализации игры
-        await this.handleJoinLobby(client, {
-          lobbyId: initData.start_param,
-          telegramId: initData.user.id
-        });
       }
 
       // Проверяем наличие активного лобби
