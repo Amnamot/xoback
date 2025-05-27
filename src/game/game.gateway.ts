@@ -249,7 +249,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           // Удаляем лобби только если оно все еще в статусе pending
           await this.gameService.deleteLobby(lobbyId);
           this.clientLobbies.delete(telegramId);
-          this.server.to(lobbyId).emit('lobbyDeleted', {
+          const roomId = lobbyId.replace(/^lobby/, 'room');
+          this.server.to(roomId).emit('lobbyDeleted', {
             reason: 'Creator disconnected and did not reconnect'
           });
         }
@@ -264,14 +265,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const session = await this.gameService.getGameSession(gameId);
       if (session) {
         // Уведомляем обоппонента об отключении
-        this.server.to(gameId).emit('playerDisconnected', { telegramId });
+        const roomId = gameId.replace(/^lobby/, 'room');
+        this.server.to(roomId).emit('playerDisconnected', { telegramId });
 
         // Устанавливаем таймаут на переподключение
         const timeout = setTimeout(async () => {
           // Если игрок не переподключился за 30 секунд, завершаем игру
           const winnerId = String(session.creatorId) === String(telegramId) ? session.opponentId : session.creatorId;
           await this.gameService.endGameSession(gameId, winnerId);
-          this.server.to(gameId).emit('gameEnded', {
+          this.server.to(roomId).emit('gameEnded', {
             winner: winnerId,
             reason: 'disconnect'
           });
@@ -590,7 +592,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.updateTTL(`lobby:${data.gameId}`);
     await this.updateTTL(`player:${data.player}`);
 
-    this.server.to(data.gameId).emit('moveMade', {
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    this.server.to(roomId).emit('moveMade', {
       moveId: `move_${currentTime}`,
       position: data.position,
       player: data.player,
@@ -630,7 +633,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.saveToRedis(`lobby:${data.gameId}`, updatedGameData);
 
     // Отправляем обновленное время всем игрокам
-    this.server.to(data.gameId).emit('timeUpdated', {
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    this.server.to(roomId).emit('timeUpdated', {
       playerTime1: updatedGameData.creatorTime,
       playerTime2: updatedGameData.opponentTime
     });
@@ -662,7 +666,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.saveToRedis(`lobby:${data.gameId}`, updatedGameData);
 
     // Отправляем событие окончания игры
-    this.server.to(data.gameId).emit('gameEnded', { 
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    this.server.to(roomId).emit('gameEnded', { 
       winner: data.winner,
       statistics: {
         totalTime: Math.floor((Date.now() - gameData.startTime) / 1000),
@@ -686,7 +691,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: JoinGameDto
   ) {
     this.clientGames.set(data.telegramId, data.gameId);
-    client.join(data.gameId);
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    client.join(roomId);
     
     return { status: 'joined' };
   }
@@ -707,7 +713,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     await this.gameService.endGameSession(data.gameId, winner);
 
-    this.server.to(data.gameId).emit('gameEnded', {
+    const roomId = data.gameId.replace(/^lobby/, 'room');
+    this.server.to(roomId).emit('gameEnded', {
       winner,
       reason: 'timeout',
       statistics: {
@@ -1007,8 +1014,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       
       // Отправляем событие об удалении лобби всем в комнате
       const timestamp = Date.now();
-      console.log('📢 Broadcasting lobbyDeleted event to room:', lobby.id);
-      this.server.to(lobby.id).emit('lobbyDeleted', {
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      console.log('📢 Broadcasting lobbyDeleted event to room:', roomId);
+      this.server.to(roomId).emit('lobbyDeleted', {
         reason: 'Cancelled by creator',
         timestamp
       });
@@ -1241,7 +1249,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
 
           // Подключаем к комнате игры
-          client.join(playerData.gameId);
+          const roomId = playerData.gameId.replace(/^lobby/, 'room');
+          client.join(roomId);
           this.clientGames.set(data.telegramId, playerData.gameId);
 
           // Отправляем текущее состояние игры
@@ -1349,7 +1358,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         // Подключаем к комнате игры
-        client.join(playerData.gameId);
+        const roomId = playerData.gameId.replace(/^lobby/, 'room');
+        client.join(roomId);
         this.clientGames.set(data.telegramId, playerData.gameId);
 
         // Отправляем текущее состояние игры
