@@ -518,7 +518,29 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         opponentId: updatedGameSession.opponentId,
         creatorMarker: updatedGameSession.creatorMarker,
         opponentMarker: updatedGameSession.opponentMarker,
-        currentTurn: updatedGameSession.currentTurn
+        currentTurn: updatedGameSession.currentTurn,
+        currentPlayer: updatedGameSession.currentTurn,
+        gameSession: {
+          id: updatedGameSession.id,
+          creatorId: updatedGameSession.creatorId,
+          currentTurn: updatedGameSession.currentTurn,
+          players: {
+            x: {
+              isCreator: true,
+              moveTimer: 30000,
+              time: 0,
+              playerTime1: 0,
+              playerTime2: 0
+            },
+            o: {
+              isCreator: false,
+              moveTimer: 30000,
+              time: 0,
+              playerTime1: 0,
+              playerTime2: 0
+            }
+          }
+        }
       });
 
       // Отправляем событие о присоединении игрока
