@@ -493,7 +493,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(roomId).emit('gameStart', {
         gameId: data.lobbyId,
         lobbyId: data.lobbyId,
-        startTime: updatedGameSession.startedAt,
+        startTime: Date.now(),
         creatorId: updatedGameSession.creatorId,
         opponentId: updatedGameSession.opponentId,
         creatorMarker: updatedGameSession.creatorMarker,
