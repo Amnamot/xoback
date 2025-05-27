@@ -511,6 +511,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Отправляем событие начала игры
       const gameRoomId = data.lobbyId.replace(/^lobby/, 'room');
+      console.log('🎮 [GameStart] Sending gameStart event:', {
+        gameRoomId,
+        lobbyId: data.lobbyId,
+        creatorId: updatedGameSession.creatorId,
+        opponentId: updatedGameSession.opponentId,
+        rooms: Array.from(this.server.sockets.adapter.rooms.keys()),
+        timestamp: new Date().toISOString()
+      });
+      
       this.server.to(gameRoomId).emit('gameStart', {
         gameId: data.lobbyId,
         lobbyId: data.lobbyId,
@@ -542,6 +551,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             }
           }
         }
+      });
+
+      console.log('✅ [GameStart] Event sent:', {
+        gameRoomId,
+        timestamp: new Date().toISOString()
       });
 
       // Отправляем событие о присоединении игрока
