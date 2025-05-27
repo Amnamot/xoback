@@ -492,6 +492,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const roomId = data.lobbyId.replace(/^lobby/, 'room');
       this.server.to(roomId).emit('gameStart', {
         gameId: data.lobbyId,
+        lobbyId: data.lobbyId,
         startTime: updatedGameSession.startedAt,
         creatorId: updatedGameSession.creatorId,
         opponentId: updatedGameSession.opponentId,
@@ -1338,67 +1339,82 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { telegramId: string }
   ) {
-    console.log('🔄 [InitialState] Getting initial state:', {
-      telegramId: data.telegramId,
-      timestamp: new Date().toISOString()
-    });
-
-    // Получаем данные игрока
-    const playerData = await this.getFromRedis(`player:${data.telegramId}`);
-    if (!playerData) {
-      console.log('❌ [InitialState] No player data found:', {
-        telegramId: data.telegramId,
+    try {
+      const { telegramId } = data;
+      console.log('🎮 [GetInitialState] Request received:', {
+        telegramId,
+        socketId: client.id,
         timestamp: new Date().toISOString()
       });
-      return { status: 'error', message: 'No player data found' };
-    }
 
-    // Если есть активная игра, отправляем её состояние
-    if (playerData.gameId) {
-      const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
-      if (gameData) {
-        console.log('🎮 [InitialState] Found active game:', {
-          telegramId: data.telegramId,
-          gameId: playerData.gameId,
+      // Получаем данные игрока из Redis
+      const playerData = await this.getFromRedis(`player:${telegramId}`);
+      if (playerData?.lobbyId) {
+        // Отправляем lobbyId клиенту
+        client.emit('lobbyIdReceived', { lobbyId: playerData.lobbyId });
+        console.log('✅ [GetInitialState] LobbyId sent:', {
+          lobbyId: playerData.lobbyId,
+          telegramId,
+          socketId: client.id,
           timestamp: new Date().toISOString()
         });
-
-        // Подключаем к комнате игры
-        const roomId = playerData.gameId.replace(/^lobby/, 'room');
-        client.join(roomId);
-        this.clientGames.set(data.telegramId, playerData.gameId);
-
-        // Отправляем текущее состояние игры
-        this.sendGameStateToSocket(client, gameData, playerData.gameId);
-
-        return {
-          status: 'success',
-          state: 'game',
-          gameData: {
-            board: gameData.board,
-            currentTurn: gameData.currentTurn,
-            playerTime1: gameData.playerTime1,
-            playerTime2: gameData.playerTime2,
-            startTime: gameData.startTime,
-            lastMoveTime: gameData.lastMoveTime
-          }
-        };
       }
+
+      // Если есть активная игра, отправляем её состояние
+      if (playerData.gameId) {
+        const gameData = await this.getFromRedis(`game:${playerData.gameId}`);
+        if (gameData) {
+          console.log('🎮 [InitialState] Found active game:', {
+            telegramId,
+            gameId: playerData.gameId,
+            timestamp: new Date().toISOString()
+          });
+
+          // Подключаем к комнате игры
+          const roomId = playerData.gameId.replace(/^lobby/, 'room');
+          client.join(roomId);
+          this.clientGames.set(telegramId, playerData.gameId);
+
+          // Отправляем текущее состояние игры
+          this.sendGameStateToSocket(client, gameData, playerData.gameId);
+
+          return {
+            status: 'success',
+            state: 'game',
+            gameData: {
+              board: gameData.board,
+              currentTurn: gameData.currentTurn,
+              playerTime1: gameData.playerTime1,
+              playerTime2: gameData.playerTime2,
+              startTime: gameData.startTime,
+              lastMoveTime: gameData.lastMoveTime
+            }
+          };
+        }
+      }
+
+      // Если нет активной игры, отправляем начальное состояние
+      return {
+        status: 'success',
+        state: 'waiting',
+        gameData: {
+          board: Array(10000).fill(null),
+          currentTurn: 'x',
+          playerTime1: 0,
+          playerTime2: 0,
+          startTime: Date.now(),
+          lastMoveTime: Date.now()
+        }
+      };
+    } catch (error) {
+      console.error('❌ [GetInitialState] Error:', {
+        error: error.message,
+        telegramId: data.telegramId,
+        socketId: client.id,
+        timestamp: new Date().toISOString()
+      });
+      client.emit('error', { message: error.message });
     }
-
-    // Если нет активной игры, отправляем начальное состояние
-    return {
-      status: 'success',
-      state: 'waiting',
-      gameData: {
-        board: Array(10000).fill(null),
-        currentTurn: 'x',
-        playerTime1: 0,
-        playerTime2: 0,
-        startTime: Date.now(),
-        lastMoveTime: Date.now()
-      }
-    };
   }
 
   onModuleDestroy() {
