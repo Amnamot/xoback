@@ -488,18 +488,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
-      // Отправляем событие начала игры
+      // Подготавливаем roomId
       const roomId = data.lobbyId.replace(/^lobby/, 'room');
-      this.server.to(roomId).emit('gameStart', {
-        gameId: data.lobbyId,
-        lobbyId: data.lobbyId,
-        startTime: Date.now(),
-        creatorId: updatedGameSession.creatorId,
-        opponentId: updatedGameSession.opponentId,
-        creatorMarker: updatedGameSession.creatorMarker,
-        opponentMarker: updatedGameSession.opponentMarker,
-        currentTurn: updatedGameSession.currentTurn
-      });
 
       // Сохраняем данные игрока
       await this.saveToRedis(`player:${data.telegramId}`, {
@@ -518,6 +508,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Добавляем клиента только в игровую комнату
       client.join(roomId);
+
+      // Отправляем событие начала игры
+      this.server.to(roomId).emit('gameStart', {
+        gameId: data.lobbyId,
+        lobbyId: data.lobbyId,
+        startTime: Date.now(),
+        creatorId: updatedGameSession.creatorId,
+        opponentId: updatedGameSession.opponentId,
+        creatorMarker: updatedGameSession.creatorMarker,
+        opponentMarker: updatedGameSession.opponentMarker,
+        currentTurn: updatedGameSession.currentTurn
+      });
 
       // Отправляем событие о присоединении игрока
       this.server.to(roomId).emit('playerJoined', {
