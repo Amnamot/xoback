@@ -474,20 +474,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         };
       }
 
-      // Запускаем игру
-      await this.gameService.startGame(data.lobbyId);
-
-      // Получаем обновленную игровую сессию
-      const updatedGameSession = await this.gameService.getGameSession(data.lobbyId);
-      if (!updatedGameSession) {
-        console.error('❌ Failed to get game session after start:', data.lobbyId);
-        return { 
-          status: 'error',
-          message: 'Failed to get game session',
-          timestamp: Date.now()
-        };
-      }
-
       // Подготавливаем roomId
       const roomId = data.lobbyId.replace(/^lobby/, 'room');
 
@@ -506,8 +492,22 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         marker: 'o'
       });
 
-      // Добавляем клиента только в игровую комнату
+      // Добавляем клиента в игровую комнату
       client.join(roomId);
+
+      // Запускаем игру
+      await this.gameService.startGame(data.lobbyId);
+
+      // Получаем обновленную игровую сессию
+      const updatedGameSession = await this.gameService.getGameSession(data.lobbyId);
+      if (!updatedGameSession) {
+        console.error('❌ Failed to get game session after start:', data.lobbyId);
+        return { 
+          status: 'error',
+          message: 'Failed to get game session',
+          timestamp: Date.now()
+        };
+      }
 
       // Отправляем событие начала игры
       this.server.to(roomId).emit('gameStart', {
