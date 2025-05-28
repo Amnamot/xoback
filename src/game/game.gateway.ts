@@ -558,6 +558,31 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
 
+      // Отправляем состояние игры
+      this.server.to(gameRoomId).emit('gameState', {
+        board: updatedGameSession.board,
+        currentPlayer: updatedGameSession.currentTurn,
+        scale: 1,
+        position: { x: 0, y: 0 },
+        time: 0,
+        playerTime1: updatedGameSession.playerTime1 || 0,
+        playerTime2: updatedGameSession.playerTime2 || 0,
+        startedAt: Date.now(),
+        lastMoveTime: Date.now(),
+        maxMoveTime: 30000,
+        gameSession: {
+          id: updatedGameSession.id,
+          creatorId: updatedGameSession.creatorId,
+          opponentId: updatedGameSession.opponentId,
+          lobbyId: data.lobbyId
+        }
+      });
+
+      console.log('✅ [GameState] Event sent:', {
+        gameRoomId,
+        timestamp: new Date().toISOString()
+      });
+
       // Отправляем событие о присоединении игрока
       this.server.to(gameRoomId).emit('playerJoined', {
         lobbyId: data.lobbyId,
