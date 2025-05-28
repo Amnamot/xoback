@@ -31,7 +31,6 @@ import { randomBytes } from 'crypto';
 import { InjectRedis } from '@nestjs-modules/ioredis';
 import Redis from 'ioredis';
 import { InitDataService } from '../utils/init-data.service';
-import { LobbyService } from '../lobby/lobby.service';
 
 const MAX_MOVE_TIME = 30000;
 
@@ -96,8 +95,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
     @InjectRedis() private readonly redis: Redis,
-    private readonly initDataService: InitDataService,
-    private readonly lobbyService: LobbyService
+    private readonly initDataService: InitDataService
   ) {
     console.log('WebSocket URL:', this.configService.get('SOCKET_URL'));
     
@@ -362,9 +360,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: 'x',
-        newUser: isNewUser,
-        name: data.name,
-        avatar: data.avatar
+        newUser: isNewUser
       });
       
       // Сохраняем связь клиент-лобби
@@ -779,51 +775,229 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('createInvite')
+  @UsePipes(new ValidationPipe())
   async handleCreateInvite(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { telegramId: string }
+    @MessageBody() data: CreateInviteDto
   ) {
-    console.log('📨 [WebApp] Creating invite:', {
+    console.log('🔍 [Invite] Starting invite creation for telegramId:', {
       telegramId: data.telegramId,
       socketId: client.id,
+      clientRooms: Array.from(client.rooms || []),
       timestamp: new Date().toISOString()
     });
-
+    
     try {
-      // Получаем существующие данные игрока
-      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
-      if (!existingPlayerData) {
-        throw new Error('Player data not found');
+      // Проверяем состояние Redis перед поиском лобби
+      const redisState = await Promise.all([
+        this.redis.keys('lobby_*'),
+        this.redis.keys('user_lobby:*'),
+        this.redis.keys('player:*')
+      ]);
+      
+      console.log('🔍 [Invite] Redis state before lobby search:', {
+        lobbies: redisState[0],
+        userLobbies: redisState[1],
+        players: redisState[2],
+        timestamp: new Date().toISOString()
+      });
+
+      // Получаем лобби из GameService
+      let lobby = await this.gameService.findLobbyByCreator(data.telegramId);
+      
+      if (!lobby) {
+        console.log('❌ [Invite] No matching lobby found for telegramId:', {
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString(),
+          redisState: {
+            lobbies: redisState[0],
+            userLobbies: redisState[1],
+            players: redisState[2]
+          }
+        });
+
+        // Пробуем создать новое лобби, если не найдено
+        console.log('🔄 [Invite] Attempting to create new lobby for creator:', {
+          telegramId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+
+        const newLobby = await this.gameService.createLobby(data.telegramId);
+        if (!newLobby) {
+          console.error('❌ [Invite] Failed to create new lobby:', {
+            telegramId: data.telegramId,
+            timestamp: new Date().toISOString()
+          });
+          return { error: 'Failed to create lobby' };
+        }
+
+        console.log('✅ [Invite] Created new lobby:', {
+          lobbyId: newLobby.id,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+
+        // Используем новое лобби
+        lobby = newLobby;
       }
 
-      // Создаем приглашение через LobbyService
-      const invite = await this.lobbyService.createInvite(data.telegramId);
+      console.log('✅ [Invite] Found lobby:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        clientRooms: Array.from(client.rooms || []),
+        timestamp: new Date().toISOString(),
+        lobbyData: await this.redis.get(lobby.id),
+        userLobbyData: await this.redis.get(`user_lobby:${data.telegramId}`)
+      });
+
+      // Получаем текущие данные лобби
+      const lobbyData = await this.getFromRedis(`lobby:${lobby.id}`);
       
-      // Отправляем событие о создании приглашения
-      client.emit('inviteCreated', {
-        status: 'success',
-        inviteId: invite.messageId,
-        lobbyId: invite.lobbyId,
+      if (!lobbyData) {
+        console.error('❌ [Invite] Lobby data not found in Redis:', {
+          lobbyId: lobby.id,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+        return { error: 'Lobby data not found' };
+      }
+
+      // Обновляем данные лобби
+      await this.saveToRedis(`lobby:${lobby.id}`, {
+        ...lobbyData,
+        inviteSent: true,
+        lastAction: 'invite_sent',
         timestamp: Date.now()
       });
 
-      console.log('✅ [WebApp] Invite created:', {
-        telegramId: data.telegramId,
-        inviteId: invite.messageId,
-        lobbyId: invite.lobbyId,
+      // Проверяем членство в комнате перед сохранением в Redis
+      console.log('🔍 [Invite] Room membership check before Redis:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        inRoom: client.rooms.has(lobby.id),
+        allRooms: Array.from(client.rooms || []),
         timestamp: new Date().toISOString()
       });
+
+      // Сохраняем данные в Redis
+      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
+      const isNewUser = !existingPlayerData;
+      await this.saveToRedis(`player:${data.telegramId}`, {
+        ...existingPlayerData,
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: 'x',
+        newUser: isNewUser
+      });
+      console.log('[DEBUG][PLAYER SAVE]', {
+        telegramId: data.telegramId,
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: 'x',
+        source: 'handleCreateInvite',
+        timestamp: new Date().toISOString()
+      });
+
+      // Проверяем членство в комнате после сохранения в Redis
+      console.log('🔍 [Invite] Room membership check after Redis:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        inRoom: client.rooms.has(lobby.id),
+        allRooms: Array.from(client.rooms || []),
+        timestamp: new Date().toISOString()
+      });
+
+      // Если создатель не в комнате, добавляем его
+      const roomId = lobby.id.replace(/^lobby/, 'room');
+      if (!client.rooms.has(roomId)) {
+        console.log('⚠️ [Invite] Creator not in room, rejoining:', {
+          lobbyId: lobby.id,
+          roomId: roomId,
+          creatorId: data.telegramId,
+          timestamp: new Date().toISOString()
+        });
+        
+        client.join(roomId);
+        
+        console.log('✅ [Invite] Creator rejoined room:', {
+          lobbyId: lobby.id,
+          roomId: roomId,
+          creatorId: data.telegramId,
+          newRooms: Array.from(client.rooms || []),
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      console.log('🎯 [Invite] Lobby state after invite:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        lobbyStatus: lobby.status,
+        creatorMarker: 'x',
+        redisKeys: {
+          player: `player:${data.telegramId}`,
+          lobby: `lobby:${lobby.id}`
+        },
+        clientState: {
+          inClientGames: this.clientGames.has(data.telegramId),
+          inClientLobbies: this.clientLobbies.has(data.telegramId),
+          inConnectedClients: this.connectedClients.has(data.telegramId),
+          rooms: Array.from(client.rooms || [])
+        },
+        timestamp: new Date().toISOString()
+      });
+
+      // Формируем сообщение для отправки
+      const result = {
+        type: "article",
+        id: randomBytes(5).toString("hex"),
+        title: "Invitation to the game!",
+        description: "Click to accept the call!",
+        input_message_content: {
+          message_text: `❌ Invitation to the game ⭕️\n\nPlayer invites you\nto fight in endless TicTacToe`,
+        },
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: "⚔️ Accept the battle 🛡",
+              url: `https://t.me/TacTicToe_bot?startapp=${lobby.id}`
+            }
+          ]]
+        },
+        thumbnail_url: "https://brown-real-meerkat-526.mypinata.cloud/ipfs/bafkreihszmccida3akvw4oshrwcixy5xnpimxiprjrnqo5aevzshj4foda",
+        thumbnail_width: 300,
+        thumbnail_height: 300,
+      };
+
+      console.log('📤 [Invite] Preparing Telegram API request:', {
+        lobbyId: lobby.id,
+        creatorId: data.telegramId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Отправляем сообщение через Telegram Bot API
+      const BOT_TOKEN = this.configService.get("BOT_TOKEN");
+      const apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/savePreparedInlineMessage`;
+      const url = `${apiUrl}?user_id=${data.telegramId}&result=${encodeURIComponent(JSON.stringify(result))}&allow_user_chats=true&allow_group_chats=true`;
+      
+      const { data: response } = await firstValueFrom(this.httpService.get(url));
+      
+      console.log('📨 [Invite] Telegram API response:', {
+        response,
+        lobbyId: lobby.id,
+        timestamp: new Date().toISOString()
+      });
+
+      return { 
+        messageId: response.result.id, 
+        lobbyId: lobby.id 
+      };
     } catch (error) {
-      console.error('❌ [WebApp] Error creating invite:', {
+      console.error('🛑 [Invite] Error creating invite:', {
         error: error instanceof Error ? error.message : 'Unknown error',
         telegramId: data.telegramId,
         timestamp: new Date().toISOString()
       });
-      client.emit('inviteCreated', {
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: Date.now()
-      });
+      return { error: 'Failed to create invite' };
     }
   }
 
@@ -940,6 +1114,28 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.data = { ...client.data, lastState: data.state };
 
     try {
+      // Если это состояние loader, сохраняем данные пользователя в Redis
+      if (data.state === 'loader') {
+        const { user } = this.initDataService.parseInitData(client.handshake.query.initData as string);
+        if (user) {
+          const existingData = await this.getFromRedis(`player:${data.telegramId}`);
+          await this.saveToRedis(`player:${data.telegramId}`, {
+            ...existingData,
+            name: user.first_name,
+            avatar: user.photo_url
+          });
+          console.log('✅ [WebApp] Saved user data to Redis:', {
+            telegramId: data.telegramId,
+            existingData,
+            newData: {
+              name: user.first_name,
+              avatar: user.photo_url
+            },
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
       // Получаем данные игрока
       const playerData = await this.getFromRedis(`player:${data.telegramId}`);
       
@@ -980,7 +1176,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             await this.updateTTL(`game:${roomIdUi}`);
           }
 
-          console.log('✅ [WebApp] TTL updated:', {
+          // Обновляем статус в Redis
+          await this.saveToRedis(`player:${data.telegramId}`, {
+            ...playerData,
+            lastAction: data.state,
+            timestamp: Date.now()
+          });
+
+          console.log('✅ [WebApp] State updated:', {
             telegramId: data.telegramId,
             state: data.state,
             lobbyId: playerData.lobbyId,
@@ -1050,8 +1253,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!opponentData) return { error: 'No opponent data' };
 
     const result = {
-      name: opponentData.name,
-      avatar: opponentData.avatar
+      name: opponentData.name || 'Opponent',
+      avatar: opponentData.avatar || null
     };
     console.log('🟢 [getOpponentInfo] Returning opponent data:', { telegramId: data.telegramId, opponentId, result, timestamp: new Date().toISOString() });
     return result;
