@@ -1604,6 +1604,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
             avatar: opponentData?.avatar || null
           }
         }
+      },
+      // Добавляем данные игроков в корень объекта
+      creator: {
+        name: creatorData?.name || 'Creator',
+        avatar: creatorData?.avatar || null,
+        marker: 'x'
+      },
+      opponent: {
+        name: opponentData?.name || 'Opponent',
+        avatar: opponentData?.avatar || null,
+        marker: 'o'
       }
     });
     console.log('[DEBUG][SOCKET][AUTO_SEND_GAMESTATE_ON_JOIN]', {
