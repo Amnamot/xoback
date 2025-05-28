@@ -323,15 +323,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         creatorId: data.telegramId,
         status: lobby.status
       });
-      
-      // Проверяем существование пользователя в таблице User
-      const user = await this.gameService.findUserByTelegramId(data.telegramId);
-      const isNewUser = !user;
-      console.log('👤 [CreateLobby] User check:', {
-        telegramId: data.telegramId,
-        isNewUser,
-        timestamp: new Date().toISOString()
-      });
 
       // Создаем игровую сессию через GameService
       const gameSession = await this.gameService.createGameSession(lobby.id, {
@@ -356,11 +347,30 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       // Сохраняем данные игрока
+      const { user: initUserData } = this.initDataService.parseInitData(client.handshake.query.initData as string);
+      console.log('👤 [CreateLobby] User data from initData:', {
+        telegramId: data.telegramId,
+        name: initUserData?.first_name,
+        avatar: initUserData?.photo_url,
+        timestamp: new Date().toISOString()
+      });
+
       await this.saveToRedis(`player:${data.telegramId}`, {
         lobbyId: lobby.id,
         role: 'creator',
         marker: 'x',
-        newUser: isNewUser
+        name: initUserData?.first_name,
+        avatar: initUserData?.photo_url
+      });
+
+      console.log('✅ [CreateLobby] Player data saved to Redis:', {
+        telegramId: data.telegramId,
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: 'x',
+        name: initUserData?.first_name,
+        avatar: initUserData?.photo_url,
+        timestamp: new Date().toISOString()
       });
       
       // Сохраняем связь клиент-лобби
@@ -879,25 +889,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         timestamp: new Date().toISOString()
       });
 
-      // Сохраняем данные в Redis
-      const existingPlayerData = await this.getFromRedis(`player:${data.telegramId}`);
-      const isNewUser = !existingPlayerData;
-      await this.saveToRedis(`player:${data.telegramId}`, {
-        ...existingPlayerData,
-        lobbyId: lobby.id,
-        role: 'creator',
-        marker: 'x',
-        newUser: isNewUser
-      });
-      console.log('[DEBUG][PLAYER SAVE]', {
-        telegramId: data.telegramId,
-        lobbyId: lobby.id,
-        role: 'creator',
-        marker: 'x',
-        source: 'handleCreateInvite',
-        timestamp: new Date().toISOString()
-      });
-
       // Проверяем членство в комнате после сохранения в Redis
       console.log('🔍 [Invite] Room membership check after Redis:', {
         lobbyId: lobby.id,
@@ -1114,28 +1105,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.data = { ...client.data, lastState: data.state };
 
     try {
-      // Если это состояние loader, сохраняем данные пользователя в Redis
-      if (data.state === 'loader') {
-        const { user } = this.initDataService.parseInitData(client.handshake.query.initData as string);
-        if (user) {
-          const existingData = await this.getFromRedis(`player:${data.telegramId}`);
-          await this.saveToRedis(`player:${data.telegramId}`, {
-            ...existingData,
-            name: user.first_name,
-            avatar: user.photo_url
-          });
-          console.log('✅ [WebApp] Saved user data to Redis:', {
-            telegramId: data.telegramId,
-            existingData,
-            newData: {
-              name: user.first_name,
-              avatar: user.photo_url
-            },
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-
       // Получаем данные игрока
       const playerData = await this.getFromRedis(`player:${data.telegramId}`);
       
@@ -1175,13 +1144,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             await this.updateTTL(`game:${roomIdUi}`);
           }
-
-          // Обновляем статус в Redis
-          await this.saveToRedis(`player:${data.telegramId}`, {
-            ...playerData,
-            lastAction: data.state,
-            timestamp: Date.now()
-          });
 
           console.log('✅ [WebApp] State updated:', {
             telegramId: data.telegramId,
