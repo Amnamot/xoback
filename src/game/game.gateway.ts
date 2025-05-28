@@ -588,24 +588,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       // Отправляем состояние игры
-      this.server.to(gameRoomId).emit('gameState', {
-        board: updatedGameSession.board,
-        currentPlayer: updatedGameSession.currentTurn,
-        scale: 1,
-        position: { x: 0, y: 0 },
-        time: 0,
-        playerTime1: updatedGameSession.playerTime1 || 0,
-        playerTime2: updatedGameSession.playerTime2 || 0,
-        startedAt: Date.now(),
-        lastMoveTime: Date.now(),
-        maxMoveTime: 30000,
-        gameSession: {
-          id: updatedGameSession.id,
-          creatorId: updatedGameSession.creatorId,
-          opponentId: updatedGameSession.opponentId,
-          lobbyId: data.lobbyId
-        }
-      });
+      this.sendGameStateToSocket(client, updatedGameSession, data.lobbyId);
 
       console.log('✅ [GameState] Event sent:', {
         gameRoomId,
@@ -1544,7 +1527,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /**
    * Отправляет актуальное состояние игры конкретному сокету
    */
-  private sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
+  private async sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
     if (!gameSession) {
       console.log('⚠️ [GameGateway] Cannot send game state: gameSession is null', {
         socketId: socket.id,
@@ -1553,6 +1536,18 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       return;
     }
+
+    // Получаем данные игроков из Redis
+    const creatorData = await this.getFromRedis(`player:${gameSession.creatorId}`);
+    const opponentData = await this.getFromRedis(`player:${gameSession.opponentId}`);
+
+    console.log('🎮 [GameState] Sending game state with player data:', {
+      creatorId: gameSession.creatorId,
+      opponentId: gameSession.opponentId,
+      creatorData,
+      opponentData,
+      timestamp: new Date().toISOString()
+    });
 
     socket.emit('gameState', {
       board: gameSession.board,
@@ -1569,7 +1564,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         id: gameSession.id,
         creatorId: gameSession.creatorId,
         opponentId: gameSession.opponentId,
-        lobbyId: lobbyId
+        lobbyId: lobbyId,
+        players: {
+          creator: {
+            name: creatorData?.name || 'Creator',
+            avatar: creatorData?.avatar || null
+          },
+          opponent: {
+            name: opponentData?.name || 'Opponent',
+            avatar: opponentData?.avatar || null
+          }
+        }
       }
     });
     console.log('[DEBUG][SOCKET][AUTO_SEND_GAMESTATE_ON_JOIN]', {
