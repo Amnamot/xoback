@@ -1319,8 +1319,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!opponentData) return { error: 'No opponent data' };
 
     const result = {
-      name: opponentData.name || 'Opponent',
-      avatar: opponentData.avatar || null
+      name: opponentData.name,
+      avatar: opponentData.avatar
     };
     console.log('🟢 [getOpponentInfo] Returning opponent data:', { telegramId: data.telegramId, opponentId, result, timestamp: new Date().toISOString() });
     return result;
@@ -1596,24 +1596,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobbyId,
         players: {
           creator: {
-            name: creatorData?.name || 'Creator',
-            avatar: creatorData?.avatar || null
+            name: creatorData?.name,
+            avatar: creatorData?.avatar
           },
           opponent: {
-            name: opponentData?.name || 'Opponent',
-            avatar: opponentData?.avatar || null
+            name: opponentData?.name,
+            avatar: opponentData?.avatar
           }
         }
       },
       // Добавляем данные игроков в корень объекта
       creator: {
-        name: creatorData?.name || 'Creator',
-        avatar: creatorData?.avatar || null,
+        name: creatorData?.name,
+        avatar: creatorData?.avatar,
         marker: 'x'
       },
       opponent: {
-        name: opponentData?.name || 'Opponent',
-        avatar: opponentData?.avatar || null,
+        name: opponentData?.name,
+        avatar: opponentData?.avatar,
         marker: 'o'
       }
     });
