@@ -306,23 +306,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     
     try {
-      // Получаем данные пользователя из handshake
-      const initData = this.initDataService.parseInitData(client.handshake.query.initData as string);
-      if (!initData || !initData.user) {
-        console.error('❌ [CreateLobby] Invalid init data:', {
-          initData,
-          timestamp: new Date().toISOString()
-        });
-        throw new Error('Invalid init data');
-      }
-
-      console.log('✅ [CreateLobby] User data:', {
-        telegramId: initData.user.id,
-        firstName: initData.user.first_name,
-        photoUrl: initData.user.photo_url,
-        timestamp: new Date().toISOString()
-      });
-
       // Создание лобби через GameService
       const lobby = await this.gameService.createLobby(data.telegramId);
       
@@ -377,19 +360,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: 'x',
-        newUser: isNewUser,
-        name: initData.user.first_name,
-        avatar: initData.user.photo_url
-      });
-
-      console.log('✅ [CreateLobby] Player data saved to Redis:', {
-        telegramId: data.telegramId,
-        lobbyId: lobby.id,
-        role: 'creator',
-        marker: 'x',
-        name: initData.user.first_name,
-        avatar: initData.user.photo_url,
-        timestamp: new Date().toISOString()
+        newUser: isNewUser
       });
       
       // Сохраняем связь клиент-лобби
@@ -441,23 +412,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     
     try {
-      // Получаем данные пользователя из handshake
-      const initData = this.initDataService.parseInitData(client.handshake.query.initData as string);
-      if (!initData || !initData.user) {
-        console.error('❌ [JoinLobby] Invalid init data:', {
-          initData,
-          timestamp: new Date().toISOString()
-        });
-        throw new Error('Invalid init data');
-      }
-
-      console.log('✅ [JoinLobby] User data:', {
-        telegramId: initData.user.id,
-        firstName: initData.user.first_name,
-        photoUrl: initData.user.photo_url,
-        timestamp: new Date().toISOString()
-      });
-
       // Проверяем существование лобби
       const lobby = await this.gameService.getLobby(data.lobbyId);
       if (!lobby) {
@@ -528,21 +482,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: data.lobbyId,
         role: 'opponent',
         marker: 'o',
-        newUser: isNewUser,
-        name: initData.user.first_name,
-        avatar: initData.user.photo_url
+        newUser: isNewUser
       });
 
-      console.log('✅ [JoinLobby] Player data saved to Redis:', {
-        telegramId: data.telegramId,
-        lobbyId: data.lobbyId,
-        role: 'opponent',
-        marker: 'o',
-        name: initData.user.first_name,
-        avatar: initData.user.photo_url,
-        timestamp: new Date().toISOString()
-      });
-      
       // Сохраняем связь клиент-лобби
       this.playerStates.set(data.telegramId, {
         roomId: roomId,
@@ -612,14 +554,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       console.log('✅ [GameStart] Event sent:', {
-        gameRoomId,
-        timestamp: new Date().toISOString()
-      });
-
-      // Отправляем состояние игры
-      this.sendGameStateToSocket(client, updatedGameSession, data.lobbyId);
-
-      console.log('✅ [GameState] Event sent:', {
         gameRoomId,
         timestamp: new Date().toISOString()
       });
@@ -1319,8 +1253,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!opponentData) return { error: 'No opponent data' };
 
     const result = {
-      name: opponentData.name,
-      avatar: opponentData.avatar
+      name: opponentData.name || 'Opponent',
+      avatar: opponentData.avatar || null
     };
     console.log('🟢 [getOpponentInfo] Returning opponent data:', { telegramId: data.telegramId, opponentId, result, timestamp: new Date().toISOString() });
     return result;
@@ -1556,7 +1490,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /**
    * Отправляет актуальное состояние игры конкретному сокету
    */
-  private async sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
+  private sendGameStateToSocket(socket: Socket, gameSession: any, lobbyId: string) {
     if (!gameSession) {
       console.log('⚠️ [GameGateway] Cannot send game state: gameSession is null', {
         socketId: socket.id,
@@ -1565,18 +1499,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       return;
     }
-
-    // Получаем данные игроков из Redis
-    const creatorData = await this.getFromRedis(`player:${gameSession.creatorId}`);
-    const opponentData = await this.getFromRedis(`player:${gameSession.opponentId}`);
-
-    console.log('🎮 [GameState] Sending game state with player data:', {
-      creatorId: gameSession.creatorId,
-      opponentId: gameSession.opponentId,
-      creatorData,
-      opponentData,
-      timestamp: new Date().toISOString()
-    });
 
     socket.emit('gameState', {
       board: gameSession.board,
@@ -1593,28 +1515,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         id: gameSession.id,
         creatorId: gameSession.creatorId,
         opponentId: gameSession.opponentId,
-        lobbyId: lobbyId,
-        players: {
-          creator: {
-            name: creatorData?.name,
-            avatar: creatorData?.avatar
-          },
-          opponent: {
-            name: opponentData?.name,
-            avatar: opponentData?.avatar
-          }
-        }
-      },
-      // Добавляем данные игроков в корень объекта
-      creator: {
-        name: creatorData?.name,
-        avatar: creatorData?.avatar,
-        marker: 'x'
-      },
-      opponent: {
-        name: opponentData?.name,
-        avatar: opponentData?.avatar,
-        marker: 'o'
+        lobbyId: lobbyId
       }
     });
     console.log('[DEBUG][SOCKET][AUTO_SEND_GAMESTATE_ON_JOIN]', {
