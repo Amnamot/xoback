@@ -441,6 +441,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     
     try {
+      // Получаем данные пользователя из handshake
+      const initData = this.initDataService.parseInitData(client.handshake.query.initData as string);
+      if (!initData || !initData.user) {
+        console.error('❌ [JoinLobby] Invalid init data:', {
+          initData,
+          timestamp: new Date().toISOString()
+        });
+        throw new Error('Invalid init data');
+      }
+
+      console.log('✅ [JoinLobby] User data:', {
+        telegramId: initData.user.id,
+        firstName: initData.user.first_name,
+        photoUrl: initData.user.photo_url,
+        timestamp: new Date().toISOString()
+      });
+
       // Проверяем существование лобби
       const lobby = await this.gameService.getLobby(data.lobbyId);
       if (!lobby) {
@@ -511,9 +528,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: data.lobbyId,
         role: 'opponent',
         marker: 'o',
-        newUser: isNewUser
+        newUser: isNewUser,
+        name: initData.user.first_name,
+        avatar: initData.user.photo_url
       });
 
+      console.log('✅ [JoinLobby] Player data saved to Redis:', {
+        telegramId: data.telegramId,
+        lobbyId: data.lobbyId,
+        role: 'opponent',
+        marker: 'o',
+        name: initData.user.first_name,
+        avatar: initData.user.photo_url,
+        timestamp: new Date().toISOString()
+      });
+      
       // Сохраняем связь клиент-лобби
       this.playerStates.set(data.telegramId, {
         roomId: roomId,
