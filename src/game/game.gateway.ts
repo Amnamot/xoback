@@ -306,6 +306,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     
     try {
+      // Получаем данные пользователя из handshake
+      const initData = this.initDataService.parseInitData(client.handshake.query.initData as string);
+      if (!initData || !initData.user) {
+        console.error('❌ [CreateLobby] Invalid init data:', {
+          initData,
+          timestamp: new Date().toISOString()
+        });
+        throw new Error('Invalid init data');
+      }
+
+      console.log('✅ [CreateLobby] User data:', {
+        telegramId: initData.user.id,
+        firstName: initData.user.first_name,
+        photoUrl: initData.user.photo_url,
+        timestamp: new Date().toISOString()
+      });
+
       // Создание лобби через GameService
       const lobby = await this.gameService.createLobby(data.telegramId);
       
@@ -360,7 +377,19 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lobbyId: lobby.id,
         role: 'creator',
         marker: 'x',
-        newUser: isNewUser
+        newUser: isNewUser,
+        name: initData.user.first_name,
+        avatar: initData.user.photo_url
+      });
+
+      console.log('✅ [CreateLobby] Player data saved to Redis:', {
+        telegramId: data.telegramId,
+        lobbyId: lobby.id,
+        role: 'creator',
+        marker: 'x',
+        name: initData.user.first_name,
+        avatar: initData.user.photo_url,
+        timestamp: new Date().toISOString()
       });
       
       // Сохраняем связь клиент-лобби
